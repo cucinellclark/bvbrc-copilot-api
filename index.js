@@ -37,6 +37,8 @@ app.post('/api/user', (req, res) => {
 
 app.post('/copilot/chat', async (req, res) => {
 
+    console.log(req.body);
+
     const llm_res = await openai_client.chat.completions.create({
         'model': model, 
         'messages': [{'role': 'user', 'content': 'Hello, tell me about BV-BRC'}]
@@ -44,7 +46,7 @@ app.post('/copilot/chat', async (req, res) => {
         console.log('error = ',error);
     });
     console.log(llm_res.choices[0].message);
-    response = llm_res.choices[0].message
+    response = llm_res.choices[0].message;
 
     res.status(400).json({ message: 'llm query success', externalApiResponse: response});
 });
