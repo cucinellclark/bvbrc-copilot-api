@@ -83,9 +83,33 @@ router.get('/start-chat', (req, res) => {
 /**
  * Retrieve chat history by session ID
  */
-router.get('/get-chats', async (req, res) => {
+router.get('/get-session-messages', async (req, res) => {
     console.log('Retrieving chat history');
-    // Implement database query for chat retrieval
+
+    const session_id = req.query.session_id;
+
+    if (!session_id) {
+        return res.status(400).json({ message: 'session_id is required' });
+    }
+
+    try {
+        // Connect to the database and get the collection
+        const db = await connectToDatabase(); // Assuming connectToDatabase is defined elsewhere
+        const chatsCollection = db.collection('test1');
+
+        // Query for session messages
+        // TODO: check user is correct too
+        const messages = await chatsCollection.find({ session_id: session_id })
+                                .project({ message_id: 1, content: 1, role: 'assistant',  timestamp: 1})
+                                .sort({ timestamp: -1 }) // sort by recent first
+                                .toArray();
+
+        // Return session messages to client
+        res.status(200).json({ messages });
+    } catch (error) {
+        console.error('Error retrieving session messages:', error);
+        res.status(500).json({ message: 'Failed to retrieve session messages', error: error.message });
+    }
 });
 
 /**
