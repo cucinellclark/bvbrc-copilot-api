@@ -1,58 +1,38 @@
 // index.js
 
 const express = require('express');
-const app = express();
+const cors = require('cors');
+const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
-const port = process.env.PORT || 8492;
-
-// Middleware to parse JSON requests
-app.use(express.json());
-
 const config = require('./config.json');
+const chatRoutes = require('./routes/chatRoutes'); // Importing chat-related routes
 
-// add openai client
+const port = process.env.PORT || 3000;
+const app = express();
+
+console.log('Using port', port);
+
+// Middleware setup
+app.use(cors()); // Enable CORS for all routes
+app.use(express.json()); // Parse JSON requests
+
+// OpenAI client setup
 const model = config['model'];
 const openai_client = new OpenAI({
-    apiKey: config['openaiApiKey'], 
-   baseURL: config['openaiBaseUrl'] 
+    apiKey: config['openaiApiKey'],
+    baseURL: config['openaiBaseUrl']
 });
 
-// Simple route to test the API
+// Simple route to test API functionality
 app.get('/', (req, res) => {
-  res.send('Welcome to my API');
+    res.send('Welcome to my API');
 });
 
-// Route to handle POST request to add a user
-app.post('/api/user', (req, res) => {
-  const { name, email } = req.body;
-
-  if (!name || !email) {
-    return res.status(400).json({ error: 'Name and email are required' });
-  }
-
-  // Imagine here you'd save the user to a database
-  res.status(201).json({ message: `User ${name} created with email ${email}` });
-});
-
-
-app.post('/copilot/chat', async (req, res) => {
-
-    console.log(req.body);
-
-    const llm_res = await openai_client.chat.completions.create({
-        'model': model, 
-        'messages': [{'role': 'user', 'content': 'Hello, tell me about BV-BRC'}]
-    }).catch(function (error) {
-        console.log('error = ',error);
-    });
-    console.log(llm_res.choices[0].message);
-    response = llm_res.choices[0].message;
-
-    res.status(400).json({ message: 'llm query success', externalApiResponse: response});
-});
+// Register chat-related routes with the Express app
+app.use('/api', chatRoutes);
 
 // Start the server
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+    console.log(`Server is running on port ${port}`);
 });
 
