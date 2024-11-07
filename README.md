@@ -1,4 +1,4 @@
-# Chat API with OpenAI and MongoDB
+# BV-BRC AI API 
 
 This project is a Node.js-based API that leverages OpenAI's language models to facilitate chat interactions. It uses Express for handling HTTP requests and MongoDB for storing chat sessions and messages.
 
@@ -19,8 +19,8 @@ This project is a Node.js-based API that leverages OpenAI's language models to f
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/chat-api.git
-   cd chat-api
+   git clone https://github.com/cucinellclark/bvbrc-copilot-api.git
+   cd bvbrc-copilot-api/
    ```
 
 2. **Install dependencies**:
@@ -68,10 +68,6 @@ This project is a Node.js-based API that leverages OpenAI's language models to f
 - **POST /api/generate-title**: Generate a session title from the initial prompt.
   - Request body: `{ "query": "initial prompt" }`
   - Response: `{ "message": "success", "response": { "role": "assistant", "content": "generated title" } }`
-
-## Contributing
-
-Contributions are welcome! Please fork the repository and submit a pull request for any improvements or bug fixes.
 
 ## License
 
