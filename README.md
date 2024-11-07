@@ -1,6 +1,6 @@
 # BV-BRC AI API 
 
-This project is a Node.js-based API that leverages OpenAI's language models to facilitate chat interactions. It uses Express for handling HTTP requests and MongoDB for storing chat sessions and messages.
+This project is a Node.js-based API that leverages OpenAI's language model api to facilitate chat interactions. It uses Express for handling HTTP requests and MongoDB for storing chat sessions and messages.
 
 ## Features
 
