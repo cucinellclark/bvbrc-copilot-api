@@ -87,6 +87,7 @@ router.get('/get-session-messages', async (req, res) => {
     console.log('Retrieving chat history');
 
     const session_id = req.query.session_id;
+    console.log('session_id = ', session_id);
 
     if (!session_id) {
         return res.status(400).json({ message: 'session_id is required' });
@@ -99,8 +100,8 @@ router.get('/get-session-messages', async (req, res) => {
 
         // Query for session messages
         // TODO: check user is correct too
+        // getSessionMessages
         const messages = await chatsCollection.find({ session_id: session_id })
-                                .project({ message_id: 1, content: 1, role: 'assistant',  timestamp: 1})
                                 .sort({ timestamp: -1 }) // sort by recent first
                                 .toArray();
 
@@ -120,6 +121,7 @@ router.get('/get-all-sessions', async (req, res) => {
 
     // Extract user_id from query parameters or headers (adjust as needed)
     const user_id = req.query.user_id;
+    console.log('user_id', user_id);
 
     // Validate that user_id is provided
     if (!user_id) {
@@ -132,8 +134,7 @@ router.get('/get-all-sessions', async (req, res) => {
         const chatsCollection = db.collection('test1');
 
         // Query for all sessions with the provided user_id
-        const sessions = await chatsCollection.find({ user: user_id })
-            .project({ session_id: 1, title: 1, created_at: 1 }) // Project only the fields we need
+        const sessions = await chatsCollection.find({ user_id: user_id })
             .sort({ created_at: -1 }) // Sort by most recent sessions first
             .toArray();
 
@@ -161,7 +162,8 @@ router.post('/put-chat-entry', async (req, res) => {
 router.post('/generate-title', async (req, res) => {
     console.log('Generating session title');
 
-    const query = `Provide a concise, descriptive title based on the content of the text:\n\n${req.body.query}`;
+    const query = `Provide a concise, descriptive title based on the content of the text:\n\n${req.body.content}`;
+    console.log('req = ', req.body);
 
     try {
         const llm_res = await openai_client.chat.completions.create({
