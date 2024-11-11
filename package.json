@@ -14,6 +14,7 @@
     "express": "^4.21.1",
     "mongodb": "^6.10.0",
     "openai": "^4.68.3",
-    "pm2": "^5.4.2"
+    "pm2": "^5.4.2",
+    "p3-user": "git+https://github.com/PATRIC3/p3_user.git#c0fee2a0ac833fa78401266d705f8c5a6b80e4f3"
   }
 }

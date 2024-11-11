@@ -1,0 +1,91 @@
+Bootstrap: docker
+From: node:18-alpine
+
+%setup
+	mkdir -p $SINGULARITY_ROOTFS/config
+	mkdir -p $SINGULARITY_ROOTFS/logs
+
+%files
+./app.js /p3_user/
+./bin /p3_user/
+./buildClient.sh /p3_user/
+./config.js /p3_user/
+./dataModel.js /p3_user/
+./facets /p3_user/
+./generateToken.js /p3_user/
+./LICENSE.md /p3_user/
+./middleware /p3_user/
+./models /p3_user/
+./p3-user.conf.example /p3_user/
+./singularity/default_pm2_config.js /p3_user/
+./singularity/scripts /p3_user/singularity_scripts
+./package.json /p3_user/
+./package-lock.json /p3_user/
+./public /p3_user/
+./readme.md /p3_user/
+./routes /p3_user/
+./site.js /p3_user/
+./utils.js /p3_user/
+./validateToken.js /p3_user/
+./views /p3_user/
+
+%environment
+	export PM2_HOME=/config/pm2
+  export P3_USER_CONFIG=/config/p3_user.conf
+
+%post
+	echo 'http://dl-cdn.alpinelinux.org/alpine/v3.6/main' >> /etc/apk/repositories
+	echo 'http://dl-cdn.alpinelinux.org/alpine/v3.6/community' >> /etc/apk/repositories
+  apk update
+	apk add --no-cache git jq g++ make python3 mongodb
+	npm install -g npm pm2 node-gyp
+	cd /p3_user
+	npm install
+	apk del g++ python3 make
+
+%startscript
+  echo "Starting P3 USER"
+	if [ ! -f /config/pm2.config.js ]; then
+		cp /p3_user/default_pm2_config.js /config/pm2.config.js
+  fi
+
+	if [ ! -f /config/p3_user.conf ]; then
+		cp /p3_user/p3-user.conf.example /config/p3_user.conf
+  fi
+
+	if [ ! -f /config/start.sh ]; then
+	  cp /p3_user/singularity_scripts/* /config/
+  fi
+
+  echo "SINGULARITY_CONTAINER=$SINGULARITY_CONTAINER" > /config/instance.vars
+	echo "SINGULARITY_INSTANCE=$1" >> /config/instance.vars
+	echo "SINGULARITY_BIND=$SINGULARITY_BIND" >> /config/instance.vars
+
+	env > /logs/env.log
+
+	pm2-runtime /config/pm2.config.js || exit 1
+
+%apprun generate_scripts
+	cp /p3_user/singularity_scripts/* /config/
+
+%apprun stop
+	pm2 stop p3_user
+
+%apprun start
+	pm2-runtime /config/pm2.config.js
+
+%apprun restart 
+	pm2 reload /config/pm2.config.js 
+
+%apprun scale
+  pm2 scale p3_user $@
+
+%apprun status 
+	pm2 list
+
+%apprun pm2
+  pm2 $@
+
+%apprun mongo
+  MONGOURL=`cat /config/p3_user.conf | jq -r .mongo.url`
+	mongo $MONGOURL

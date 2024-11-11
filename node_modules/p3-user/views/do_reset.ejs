@@ -1,0 +1,26 @@
+<html>
+	<head>
+		<% include header %>
+	</head>
+	<body class="claro">
+		<div class="LoginForm" style="width:300px; margin-left:auto;margin-right:auto;font-size:1.1em;margin-bottom:10px;margin-top:10px;padding:10px;border: 2px solid #ababab; border-radius: 4px;">
+			<p style="margin:0px;padding:4px;font-size:1.2em;text-align:center;background:#eee;">Enter your email and the reset code recieved in your email to reset your password</p>
+			<!-- <div>Reset Code: <%= request.params.code %> </div> -->
+
+                        <form method="post" data-dojo-type="dijit/form/Form">
+                                <div style="padding:2px;margin:10px;">
+                                        <input type="text" name="email" data-dojo-type="dijit/form/TextBox" style="width:100%" data-dojo-props='placeholder:"Your Email Address"' value="<%= request.params.email||"" %>"/>
+                                </div>
+                                <div style="padding:2px;margin:10px;">
+                                        <input type="text" name="resetCode" data-dojo-type="dijit/form/TextBox" style="width:100%" data-dojo-props='placeholder:"Reset Code"' value="<%= request.params.code||"" %>"/>
+                                </div>
+
+                                <div style="text-align:center;padding:2px;margin:10px;">
+                                        <div type="submit" value="Submit" data-dojo-type="dijit/form/Button">Reset Your Password</div>
+                                </div>
+                        </form>
+
+		</div>
+		<% include javascript %>
+	</body>
+</html>

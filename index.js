@@ -4,10 +4,15 @@ const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
+
+const ValidateToken = require('p3-user/validateToken');
+
 const config = require('./config.json');
+
 const chatRoutes = require('./routes/chatRoutes'); // Importing chat-related routes
 
-const port = process.env.PORT || 3000;
+//const port = process.env.PORT || 3000;
+const port = process.env.PORT || 7032;
 const app = express();
 
 console.log('Using port', port);
@@ -29,7 +34,7 @@ app.get('/', (req, res) => {
 });
 
 // Register chat-related routes with the Express app
-app.use('/api', chatRoutes);
+app.use('/', chatRoutes);
 
 // Start the server
 app.listen(port, () => {
