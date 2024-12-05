@@ -13,12 +13,10 @@
     "axios": "^1.7.7",
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "https-proxy-agent": "^7.0.5",
     "mongodb": "^6.10.0",
     "node-fetch": "^2.7.0",
     "openai": "^4.68.3",
     "p3-user": "git+https://github.com/PATRIC3/p3_user.git#c0fee2a0ac833fa78401266d705f8c5a6b80e4f3",
-    "pm2": "^5.4.2",
-    "socks5-https-client": "^1.2.1"
+    "pm2": "^5.4.2"
   }
 }
