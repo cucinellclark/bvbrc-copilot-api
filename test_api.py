@@ -1,12 +1,14 @@
 import requests
 
 # Define the API endpoint
-#url = 'http://localhost:3000/copilot/chat'
-url = 'https://p3cp.theseed.org/copilot/chat'
+#url = 'https://p3cp.theseed.org/copilot-api/copilot-chat'
+url = 'https://p3cp.theseed.org/copilot-api/argo/chat'
 
 # Data to be sent to the API (JSON format)
 data = {
-    "query": "Hello, tell me about BV-BRC"
+    "query": "Hello, tell me about BV-BRC",
+    "user_id": "clark.cucinell",
+    "session_id": "abcdefg"
 }
 
 # Send POST request to the API

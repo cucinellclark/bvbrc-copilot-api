@@ -5,11 +5,10 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
 
-const ValidateToken = require('p3-user/validateToken');
-
 const config = require('./config.json');
 
 const chatRoutes = require('./routes/chatRoutes'); // Importing chat-related routes
+const argoRoutes = require('./routes/argoRoutes');
 
 //const port = process.env.PORT || 3000;
 const port = process.env.PORT || 7032;
@@ -35,6 +34,7 @@ app.get('/', (req, res) => {
 
 // Register chat-related routes with the Express app
 app.use('/', chatRoutes);
+app.use('/argo', argoRoutes);
 
 // Start the server
 app.listen(port, () => {

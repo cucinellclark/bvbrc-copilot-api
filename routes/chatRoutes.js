@@ -6,12 +6,13 @@ const { OpenAI } = require('openai');
 const { connectToDatabase } = require('../database'); // Importing database connection function
 const config = require('../config.json');
 const router = express.Router();
+const authenticate = require('../middleware/auth');
 
 // OpenAI client setup
 const model = config['model'];
 const openai_client = new OpenAI({
     apiKey: config['openaiApiKey'],
-    baseURL: config['openaiBaseUrl']
+    baseURL: config['otherUrl']
 });
 
 /**
@@ -19,8 +20,72 @@ const openai_client = new OpenAI({
  * - Sends user message to LLM
  * - Stores user message and LLM response in MongoDB
  */
-router.post('/copilot-chat', async (req, res) => {
+router.post('/copilot-chat', authenticate, async (req, res) => {
     console.log('chat method triggered');
+    const { query, session_id, user_id, system_prompt } = req.body;
+
+    try {
+        const db = await connectToDatabase();
+        const chatsCollection = db.collection('test1');
+        const session = await chatsCollection.findOne({ session_id });
+
+        // Prepare context history if session exists
+        let prompt_query = query;
+        if (session) {
+            const messages = session.messages.map(m => `${m.role}: ${m.content}`).join('\n');
+            prompt_query = `Previous conversation:\n${messages}\n\n${query}`;
+        }
+        
+        // create user message object
+        const userMessage = { message_id: uuidv4(), role: 'user', content: query, timestamp: new Date() };
+
+        // setup the messages
+        const llmMessages = [];
+        if (system_prompt) {
+            llmMessages.push({ role: 'system', content: system_prompt });
+        }
+        // if (system_prompt) {
+        //     prompt_query = system_prompt + '\n' + prompt_query;
+        // }
+        llmMessages.push({ role: 'user', content: prompt_query });
+
+        // Get response from LLM
+        const llm_res = await openai_client.chat.completions.create({
+            model,
+            messages: llmMessages 
+        });
+        const response = llm_res.choices[0].message;
+
+        // Create response message object
+        const assistantMessage = { message_id: uuidv4(), role: 'assistant', content: response.content, timestamp: new Date() };
+
+        // Create or update session in MongoDB
+        if (!session) {
+            await chatsCollection.insertOne({
+                session_id,
+                user_id,
+                title: 'Untitled',
+                created_at: new Date(),
+                messages: []
+            });
+            console.log('New session created:', session_id);
+        }
+
+        // Save messages to database
+        await chatsCollection.updateOne(
+            { session_id },
+            { $push: { messages: { $each: [userMessage, assistantMessage] } } }
+        );
+
+        res.status(200).json({ message: 'success', response });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
+router.post('/argo-chat', authenticate, async (req, res) => {
+    console.log('argo chat triggered');
     const { query, session_id, user_id } = req.body;
 
     try {
@@ -36,9 +101,9 @@ router.post('/copilot-chat', async (req, res) => {
         }
 
         // Get response from LLM
-        const llm_res = await openai_client.chat.completions.create({
-            model,
-            messages: [{ role: 'user', content: prompt_query }]
+        const llm_res = await argo_client.chat.completions.create({
+            model: argoModel,
+            prompt: [prompt_query]
         });
         const response = llm_res.choices[0].message;
 
@@ -74,7 +139,7 @@ router.post('/copilot-chat', async (req, res) => {
 /**
  * Generate a new unique session ID
  */
-router.get('/start-chat', (req, res) => {
+router.get('/start-chat', authenticate, (req, res) => {
     const sessionId = uuidv4();
     console.log('Starting new session:', sessionId);
     res.status(200).json({ message: 'created session id', session_id: sessionId });
@@ -83,7 +148,7 @@ router.get('/start-chat', (req, res) => {
 /**
  * Retrieve chat history by session ID
  */
-router.get('/get-session-messages', async (req, res) => {
+router.get('/get-session-messages', authenticate, async (req, res) => {
     console.log('Retrieving chat history');
 
     const session_id = req.query.session_id;
@@ -116,7 +181,7 @@ router.get('/get-session-messages', async (req, res) => {
 /**
  * Retrieve all session IDs for a user
  */
-router.get('/get-all-sessions', async (req, res) => {
+router.get('/get-all-sessions', authenticate, async (req, res) => {
     console.log('Retrieving all chat sessions');
 
     // Extract user_id from query parameters or headers (adjust as needed)
@@ -159,7 +224,7 @@ router.post('/put-chat-entry', async (req, res) => {
 /**
  * Generate a session title from the initial prompt
  */
-router.post('/generate-title', async (req, res) => {
+router.post('/generate-title', authenticate, async (req, res) => {
     console.log('Generating session title');
 
     const query = `Provide a concise, descriptive title based on the content of the text:\n\n${req.body.content}`;
@@ -177,6 +242,71 @@ router.post('/generate-title', async (req, res) => {
         res.status(500).json({ message: 'Internal server error', error });
     }
 });
+
+/**
+ * Update the session title for a given session_id
+ */
+router.post('/update-session-title', authenticate, async (req, res) => {
+
+    console.log('updating session title');
+    const { title, session_id, user_id } = req.body;
+
+    try {
+        // Connect to the database and get the collection
+        const db = await connectToDatabase();
+        const chatsCollection = db.collection('test1');
+
+        console.log('session_id = ', session_id);
+        console.log('user_id = ', user_id);
+        console.log('title = ', title);
+
+        // Update the session title for the specified session_id and user_id
+        const updateResult = await chatsCollection.updateOne(
+            { session_id: session_id, user_id: user_id },
+            { $set: { title: title } }
+        );
+
+        // Check if the session was found and updated
+        if (updateResult.matchedCount === 0) {
+            return res.status(404).json({ message: 'Session not found or user not authorized' });
+        }
+
+        // Respond with a success message
+        res.status(200).json({ message: 'Session title updated successfully' });
+    } catch (error) {
+        console.error('Error updating session title:', error);
+        res.status(500).json({ message: 'Failed to update session title', error: error.message });
+    }
+});
+
+/**
+ * Delete a session by session_id
+ */
+router.post('/delete-session', authenticate, async (req, res) => {
+    console.log('Deleting session');
+    const { session_id, user_id} = req.body;
+
+    try {
+        if (!session_id) {
+            return res.status(400).json({ message: 'Session ID is required' });
+        }
+
+        // Call the function to remove the session from the database
+        const deleteResult = await removeBySession(session_id, user_id);
+
+        // Check if the session was successfully deleted
+        if (deleteResult.deletedCount === 0) {
+            return res.status(404).json({ message: 'Session not found' });
+        }
+
+        // Respond with a success message
+        res.status(200).json({ message: 'Session deleted successfully' });
+    } catch (error) {
+        console.error('Error deleting session:', error);
+        res.status(500).json({ message: 'Failed to delete session', error: error.message });
+    }
+});
+
 
 module.exports = router;
 
