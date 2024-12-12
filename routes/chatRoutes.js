@@ -33,7 +33,7 @@ router.post('/copilot-chat', authenticate, async (req, res) => {
         let prompt_query = query;
         if (session) {
             const messages = session.messages.map(m => `${m.role}: ${m.content}`).join('\n');
-            prompt_query = `Previous conversation:\n${messages}\n\n${query}`;
+            prompt_query = `Previous conversation:\n${messages}\n\nNew query:\n${query}\n\n`;
         }
         
         // create user message object
@@ -44,9 +44,6 @@ router.post('/copilot-chat', authenticate, async (req, res) => {
         if (system_prompt) {
             llmMessages.push({ role: 'system', content: system_prompt });
         }
-        // if (system_prompt) {
-        //     prompt_query = system_prompt + '\n' + prompt_query;
-        // }
         llmMessages.push({ role: 'user', content: prompt_query });
 
         // Get response from LLM
@@ -281,6 +278,7 @@ router.post('/update-session-title', authenticate, async (req, res) => {
 
 /**
  * Delete a session by session_id
+ * TODO: UNTESTED
  */
 router.post('/delete-session', authenticate, async (req, res) => {
     console.log('Deleting session');
@@ -307,6 +305,58 @@ router.post('/delete-session', authenticate, async (req, res) => {
     }
 });
 
+/**
+ * Get user prompts
+ */
+router.get('/get-user-prompts?', authenticate, async (req, res) => {
+    console.log('get user prompts');
+    const user_id = req.query.user_id;
+
+    try {
+        // Connect to the database and get the collection
+        const db = await connectToDatabase();
+        const promptsCollection = db.collection('testPrompts');
+
+        // Query for all prompts with the provided user_id
+        const prompts = await promptsCollection.find({ user_id: user_id })
+            .sort({ created_at: -1 }) // Sort by most recent sessions first
+            .toArray();
+
+        // Return the sessions to the client
+        res.status(200).json({ prompts: prompts });
+
+    } catch (error) {
+        console.error('Error getting user prompts:', error);
+        res.status(500).json({ message: 'Failed getting user prompts', error: error.message });
+    }
+});
+
+/**
+ * Svae a user prompt
+ */
+router.post('/save-prompt', authenticate, async (req, res) => {
+    console.log('save user prompt');
+    const { name, text, user_id } = req.body;
+
+    try {
+        // Connect to the database and get the collection
+        const db = await connectToDatabase();
+        const promptsCollection = db.collection('testPrompts');
+
+        // Update the session title for the specified session_id and user_id
+        const updateResult = await promptsCollection.updateOne(
+            { user_id: user_id },
+            { $push: { saved_prompts: { title: name, text: text } } }
+        );
+
+        // Return the sessions to the client
+        res.status(200).json({ update_result: updateResult, title: name, content: text });
+
+    } catch (error) {
+        console.error('Error getting user prompts:', error);
+        res.status(500).json({ message: 'Failed getting user prompts', error: error.message });
+    }
+});
 
 module.exports = router;
 

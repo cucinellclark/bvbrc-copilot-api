@@ -21,6 +21,7 @@ async function connectToDatabase() {
 
 /**
  * Delete session from database
+ * TODO: UNTESTED
  * @param {string} sessionId - The session ID to delete
  * @param {string} userId - The user ID associated with the session
  * @returns {Object} Result of the delete operation

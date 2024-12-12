@@ -71,17 +71,21 @@ router.post('/chat', authenticate, async (req, res) => {
         //     llmMessages.push({ role: 'system', content: system_prompt });
         // }
         // llmMessages.push({ role: 'user', content: prompt_query });
+        var sys_prompt;
         if (!system_prompt) {
-            const system_prompt = '';
+            sys_prompt = '';
+        } else {
+            sys_prompt = system_prompt;
         } 
 
         const data = {
             model: "gpt4o",
-            system: system_prompt,
+            system: sys_prompt,
             prompt: [prompt_query],
             user: "cucinell",
             temperature: 0.0
         };
+        console.log('argo data=',data);
         fetch(argoUrl, {
             method: 'POST',
             headers: {

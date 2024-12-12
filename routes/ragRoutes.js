@@ -3,82 +3,69 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
+const { ChromaClient } = require("chromadb");
 const { connectToDatabase } = require('../database'); // Importing database connection function
 const config = require('../config.json');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 
-// OpenAI client setup
+// OpenAI client setup for embeddings
+
 const model = config['ragModel'];
 const openai_client = new OpenAI({
-    apiKey: config['openaiApiKey'],
+    apiKey: 'EMPTY',
     baseURL: config['ragUrl']
 });
+
+
+const valid_rag_dbs = ['cancer_papers'];
 
 /**
  * Handle chat message with LLM server
  * - Sends user message to LLM
  * - Stores user message and LLM response in MongoDB
  */
-router.post('/rag-chat', authenticate, async (req, res) => {
-    console.log('chat method triggered');
-    const { query, rag_db, session_id, user_id } = req.body;
+router.post('/chat', authenticate, async (req, res) => {
+    // chroma client
+    const chroma = new ChromaClient({ path: config['chroma_db_url'] });
+
+    console.log('rag method triggered');
+    const { query, rag_db, user_id } = req.body;
+
+    if (!valid_rag_dbs.includes(rag_db)) {
+        res.status(400).json({ message: `Invalid rag_db: ${rag_db}` });
+    }
 
     try {
-        const db = await connectToDatabase();
-        const chatsCollection = db.collection('test1');
-        const session = await chatsCollection.findOne({ session_id });
+        const collection = await chroma.getCollection({ name: rag_db })
+        //const collection = await chroma.countCollections()
+        
 
         // Prepare context history if session exists
         let prompt_query = query;
-        if (session) {
-            const messages = session.messages.map(m => `${m.role}: ${m.content}`).join('\n');
-            prompt_query = `Previous conversation:\n${messages}\n\n${query}`;
-        }
 
-        // Get response from LLM
-        const llm_res = await openai_client.chat.completions.create({
-            model,
-            messages: [{ role: 'user', content: prompt_query }]
+        // Query the vector database
+
+        // Get query embeddings 
+        const emb_res = await openai_client.embeddings.create({
+            model: model,
+            input: query 
         });
-        const response = llm_res.choices[0].message;
+        console.log('emb_res = ', emb_res);
+        const query_embeddings = emb_res.data[0].embedding;
 
-        // Create message objects
-        const userMessage = { message_id: uuidv4(), role: 'user', content: query, timestamp: new Date() };
-        const assistantMessage = { message_id: uuidv4(), role: 'assistant', content: response.content, timestamp: new Date() };
+        // pass embeddings to chromadb and get documents
+        const results = await collection.query({
+            queryEmbeddings: [query_embeddings],
+            nResults: 5
+        });
 
-        // Create or update session in MongoDB
-        if (!session) {
-            await chatsCollection.insertOne({
-                session_id,
-                user_id,
-                title: 'Untitled',
-                created_at: new Date(),
-                messages: []
-            });
-            console.log('New session created:', session_id);
-        }
-
-        // Save messages to database
-        await chatsCollection.updateOne(
-            { session_id },
-            { $push: { messages: { $each: [userMessage, assistantMessage] } } }
-        );
-
-        res.status(200).json({ message: 'success', response });
+        console.log('chroma query results = ', results);
+        res.status(200).json({ message: 'success', documents: results['documents'] });
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ message: 'Internal server error', error });
     }
-});
-
-/**
- * Generate a new unique session ID
- */
-router.get('/start-chat', authenticate, (req, res) => {
-    const sessionId = uuidv4();
-    console.log('Starting new session:', sessionId);
-    res.status(200).json({ message: 'created session id', session_id: sessionId });
 });
 
 module.exports = router;
