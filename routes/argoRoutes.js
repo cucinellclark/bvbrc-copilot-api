@@ -60,7 +60,7 @@ router.post('/chat', authenticate, async (req, res) => {
         let prompt_query = query;
         if (session) {
             const messages = session.messages.map(m => `${m.role}: ${m.content}`).join('\n');
-            prompt_query = `Previous conversation:\n${messages}\n\n${query}`;
+            prompt_query = `Previous conversation:\n${messages}\n\nNew query:\n${query}\n\n`;
         }
 
         // Create user message object
