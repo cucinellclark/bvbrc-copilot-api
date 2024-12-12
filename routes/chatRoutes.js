@@ -219,13 +219,13 @@ router.post('/put-chat-entry', async (req, res) => {
 });
 
 /**
- * Generate a session title from the initial prompt
+ * Generate a title from a set of messages 
  */
-router.post('/generate-title', authenticate, async (req, res) => {
+router.post('/generate-title-from-messages', authenticate, async (req, res) => {
     console.log('Generating session title');
-
-    const query = `Provide a concise, descriptive title based on the content of the text:\n\n${req.body.content}`;
-    console.log('req = ', req.body);
+    const { messages, user_id } = req.body;
+    const message_str = messages.map(msg => `message: ${msg}`).join('\n\n');
+    const query = `Provide a concise, descriptive title based on the content of the messages:\n\n${message_str}`;
 
     try {
         const llm_res = await openai_client.chat.completions.create({
@@ -282,28 +282,32 @@ router.post('/update-session-title', authenticate, async (req, res) => {
  */
 router.post('/delete-session', authenticate, async (req, res) => {
     console.log('Deleting session');
-    const { session_id, user_id} = req.body;
-
+    const { session_id, user_id } = req.body;
+    console.log('session_id = ',session_id);
     try {
         if (!session_id) {
             return res.status(400).json({ message: 'Session ID is required' });
         }
 
-        // Call the function to remove the session from the database
-        const deleteResult = await removeBySession(session_id, user_id);
+        // Connect to the database and get the collection
+        const db = await connectToDatabase();
+        const chatsCollection = db.collection('test1');
 
-        // Check if the session was successfully deleted
+        const deleteResult = await chatsCollection.deleteOne({ session_id, user_id });
+        console.log('here3=',deleteResult);
+
         if (deleteResult.deletedCount === 0) {
             return res.status(404).json({ message: 'Session not found' });
         }
 
         // Respond with a success message
-        res.status(200).json({ message: 'Session deleted successfully' });
+        res.status(200).json({ status: 'ok' });
     } catch (error) {
         console.error('Error deleting session:', error);
         res.status(500).json({ message: 'Failed to delete session', error: error.message });
     }
 });
+
 
 /**
  * Get user prompts
