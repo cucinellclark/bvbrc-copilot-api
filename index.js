@@ -19,7 +19,11 @@ console.log('Using port', port);
 
 // Middleware setup
 app.use(cors()); // Enable CORS for all routes
-app.use(express.json()); // Parse JSON requests
+app.use(express.json({ limit: '500kb' })); // limit: '1mb' Parse JSON requests
+
+//app.use(express.json({ limit: '5kb' }));
+//app.use(express.urlencoded({ extended: true, limit: '5kb' }));
+//console.log(app._router.stack.filter(layer => layer.name === 'jsonParser'));
 
 // OpenAI client setup
 /*
