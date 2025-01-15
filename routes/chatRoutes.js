@@ -30,7 +30,6 @@ async function queryClient(openai_client, model, llmMessages) {
         model,
         messages: llmMessages
     });
-    console.log('hi');
     //console.log(llm_res.choices[0].message.content);
     const response = llm_res.choices[0].message.content;
     return response;
