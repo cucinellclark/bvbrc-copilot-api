@@ -3,62 +3,127 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
+const fetch = require('node-fetch');
+const { ChromaClient } = require("chromadb"); // TODO: Maybe change out for bob's mysql database
 const { connectToDatabase } = require('../database'); // Importing database connection function
 const config = require('../config.json');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 
-// OpenAI client setup
-const model = config['model'];
-const openai_client = new OpenAI({
-    apiKey: config['openaiApiKey'],
-    baseURL: config['otherUrl']
-});
+// TODO: Change to a database or something
+const valid_rag_dbs = ['cancer_papers'];
 
-/**
- * Handle chat message with LLM server
- * - Sends user message to LLM
- * - Stores user message and LLM response in MongoDB
- */
-router.post('/copilot-chat', authenticate, async (req, res) => {
-    console.log('chat method triggered');
-    const { query, session_id, user_id, system_prompt } = req.body;
+// OpenAI client setup
+function setupOpenaiClient(apikey, url) {
+    const openai_client = new OpenAI({
+        apiKey: apikey,
+        baseURL: url
+    });
+    return openai_client; 
+}
+
+// OpenAI client llm query
+async function queryClient(openai_client, model, llmMessages) {
+    console.log('model = ', model);
+    console.log('messages = ', llmMessages);
+    const llm_res = await openai_client.chat.completions.create({
+        model,
+        messages: llmMessages
+    });
+    console.log('hi');
+    //console.log(llm_res.choices[0].message.content);
+    const response = llm_res.choices[0].message.content;
+    return response;
+}
+
+async function queryRequest(url, model, system_prompt, query) {
+    console.log('model = ', model);
+
+    const data = {
+        model: model,
+        system: system_prompt,
+        prompt: [query],
+        user: "cucinell",
+        temperature: 1.0
+    };
+
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+
+        const llmData = await response.json();
+
+        return llmData.response; // Assuming 'response' is a key in the returned JSON
+    } catch (error) {
+        console.error('Error during queryRequest:', error);
+        throw error; // Re-throw the error for the caller to handle
+    }
+}
+
+router.post ('/chat', authenticate, async (req, res) => {
+    const { query, model, session_id, user_id, system_prompt } = req.body;
 
     try {
         const db = await connectToDatabase();
-        const chatsCollection = db.collection('test1');
-        const session = await chatsCollection.findOne({ session_id });
+        const modelCollection = db.collection('modelList');
+        const chatCollection = db.collection('test1');
+        const chatSession = await chatCollection.findOne({ session_id });
+        const modelData = await modelCollection.findOne({ model }); 
 
-        // Prepare context history if session exists
         let prompt_query = query;
-        if (session) {
-            const messages = session.messages.map(m => `${m.role}: ${m.content}`).join('\n');
+        if (chatSession) {
+            const messages = chatSession.messages.map(m => `${m.role}: ${m.content}`).join('\n');
             prompt_query = `Previous conversation:\n${messages}\n\nNew query:\n${query}\n\n`;
         }
-        
+
+        // check models match
+        if (!modelData) {
+            res.status(500).json({ message: 'Model incorrect: ', model});
+        }
+
         // create user message object
         const userMessage = { message_id: uuidv4(), role: 'user', content: query, timestamp: new Date() };
 
         // setup the messages
         const llmMessages = [];
+        var request_sysprompt = '';
         if (system_prompt) {
             llmMessages.push({ role: 'system', content: system_prompt });
+            request_sysprompt = system_prompt;
         }
         llmMessages.push({ role: 'user', content: prompt_query });
 
         // Get response from LLM
-        const llm_res = await openai_client.chat.completions.create({
-            model,
-            messages: llmMessages 
-        });
-        const response = llm_res.choices[0].message;
+        console.log('modelData', modelData);
+        const queryType = modelData['queryType'];
+        var response = '';
+        console.log('queryType = ', queryType);
+        if (queryType == 'client') {
+            const openai_client = setupOpenaiClient(modelData['apiKey'], modelData['endpoint']);
+            response = await queryClient(openai_client, model, llmMessages);
+        }
+        else if (queryType == 'request') {
+            console.log('request');
+            response = await queryRequest(modelData['endpoint'], model, request_sysprompt, prompt_query);
+        } else {
+            res.status(500).json({ message: 'Invalid query type: ', queryType });
+        }
 
         // Create response message object
-        const assistantMessage = { message_id: uuidv4(), role: 'assistant', content: response.content, timestamp: new Date() };
+        const assistantMessage = { message_id: uuidv4(), role: 'assistant', content: response, timestamp: new Date() };
 
         // Create or update session in MongoDB
-        if (!session) {
-            await chatsCollection.insertOne({
+        if (!chatSession) {
+            await chatCollection.insertOne({
                 session_id,
                 user_id,
                 title: 'Untitled',
@@ -69,64 +134,68 @@ router.post('/copilot-chat', authenticate, async (req, res) => {
         }
 
         // Save messages to database
-        await chatsCollection.updateOne(
+        await chatCollection.updateOne(
             { session_id },
             { $push: { messages: { $each: [userMessage, assistantMessage] } } }
         );
 
         res.status(200).json({ message: 'success', response });
+
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ message: 'Internal server error', error });
     }
 });
 
-router.post('/argo-chat', authenticate, async (req, res) => {
-    console.log('argo chat triggered');
-    const { query, session_id, user_id } = req.body;
+// TODO: Need to test
+router.post('/rag', authenticate, async (req, res) => {
+    console.log('rag method triggered');
+    const { query, rag_db, user_id } = req.body;
+
+    if (!valid_rag_dbs.includes(rag_db)) {
+        res.status(400).json({ message: `Invalid rag_db: ${rag_db}` });
+    }
 
     try {
         const db = await connectToDatabase();
-        const chatsCollection = db.collection('test1');
-        const session = await chatsCollection.findOne({ session_id });
+        const modelCollection = db.collection('modelList');
+        const modelData = await modelCollection.findOne({ model });
+        console.log('modeldata =', modelData);
 
-        // Prepare context history if session exists
-        let prompt_query = query;
-        if (session) {
-            const messages = session.messages.map(m => `${m.role}: ${m.content}`).join('\n');
-            prompt_query = `Previous conversation:\n${messages}\n\n${query}`;
+        const queryType = modelData['queryType'];
+        console.log('queryType = ', queryType);
+        if (queryType == 'client') {
+            const openai_client = setupOpenaiClient(modelData['apiKey'], modelData['endpoint']);
+            // response = await queryClient(openai_client, model, llmMessages);
+            // get embeddings
+            const emb_res = await openai_client.embeddings.create({
+                model: model,
+                input: [query]
+            }); 
+            console.log('emb_res = ',emb_res);
+            const query_embeddings = emb_res.data[0].embedding;
         }
+        else if (queryType == 'request') {
+            // TODO: implement when there is an embedding endpoint requiring this mechanism
+            console.log('request');
+            //response = await queryRequest(modelData['endpoint'], model, request_sysprompt, prompt_query);
+            console.error('Error: Have not implemented RAG using node-fetch\n');
+            res.status(500).json({ message: 'Internal server error; not implemented fetch for rag'});
+        } else {
+            res.status(500).json({ message: 'Invalid query type: ', queryType });
+        } 
 
-        // Get response from LLM
-        const llm_res = await argo_client.chat.completions.create({
-            model: argoModel,
-            prompt: [prompt_query]
+        // chroma client and query
+        const chroma = new ChromaClient({ path: modelData['endpoint'] });
+        const collection = await chroma.getCollection({ name: rag_db })
+        const results = await collection.query({
+            queryEmbeddings: [query_embeddings],
+            nResults: 5
         });
-        const response = llm_res.choices[0].message;
 
-        // Create message objects
-        const userMessage = { message_id: uuidv4(), role: 'user', content: query, timestamp: new Date() };
-        const assistantMessage = { message_id: uuidv4(), role: 'assistant', content: response.content, timestamp: new Date() };
+        console.log('chroma query results = ', results);
+        res.status(200).json({ message: 'success', documents: results['documents'] });
 
-        // Create or update session in MongoDB
-        if (!session) {
-            await chatsCollection.insertOne({
-                session_id,
-                user_id,
-                title: 'Untitled',
-                created_at: new Date(),
-                messages: []
-            });
-            console.log('New session created:', session_id);
-        }
-
-        // Save messages to database
-        await chatsCollection.updateOne(
-            { session_id },
-            { $push: { messages: { $each: [userMessage, assistantMessage] } } }
-        );
-
-        res.status(200).json({ message: 'success', response });
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ message: 'Internal server error', error });
@@ -158,12 +227,12 @@ router.get('/get-session-messages', authenticate, async (req, res) => {
     try {
         // Connect to the database and get the collection
         const db = await connectToDatabase(); // Assuming connectToDatabase is defined elsewhere
-        const chatsCollection = db.collection('test1');
+        const chatCollection = db.collection('test1');
 
         // Query for session messages
         // TODO: check user is correct too
         // getSessionMessages
-        const messages = await chatsCollection.find({ session_id: session_id })
+        const messages = await chatCollection.find({ session_id: session_id })
                                 .sort({ timestamp: -1 }) // sort by recent first
                                 .toArray();
 
@@ -193,10 +262,10 @@ router.get('/get-all-sessions', authenticate, async (req, res) => {
     try {
         // Connect to the database and get the collection
         const db = await connectToDatabase(); // Assuming connectToDatabase is defined elsewhere
-        const chatsCollection = db.collection('test1');
+        const chatCollection = db.collection('test1');
 
         // Query for all sessions with the provided user_id
-        const sessions = await chatsCollection.find({ user_id: user_id })
+        const sessions = await chatCollection.find({ user_id: user_id })
             .sort({ created_at: -1 }) // Sort by most recent sessions first
             .toArray();
 
@@ -223,16 +292,31 @@ router.post('/put-chat-entry', async (req, res) => {
  */
 router.post('/generate-title-from-messages', authenticate, async (req, res) => {
     console.log('Generating session title');
-    const { messages, user_id } = req.body;
+    const { model, messages, user_id } = req.body;
     const message_str = messages.map(msg => `message: ${msg}`).join('\n\n');
     const query = `Provide a concise, descriptive title based on the content of the messages:\n\n${message_str}`;
 
     try {
-        const llm_res = await openai_client.chat.completions.create({
-            model,
-            messages: [{ role: 'user', content: query }]
-        });
-        const response = llm_res.choices[0].message;
+        const db = await connectToDatabase();
+        const modelCollection = db.collection('modelList');
+        const modelData = await modelCollection.findOne({ model });
+
+        const queryType = modelData['queryType'];
+        console.log('queryType = ', queryType);
+        var response = '';
+        if (queryType == 'client') {
+            console.log('modelData = ', modelData);
+            const openai_client = setupOpenaiClient(modelData['apiKey'], modelData['endpoint']);
+            const queryMsg = [{ role: 'user', content: query }];
+            response = await queryClient(openai_client, model, queryMsg);
+        }
+        else if (queryType == 'request') {
+            console.log('request');
+            response = await queryRequest(modelData['endpoint'], model, '', query);
+        } else {
+            res.status(500).json({ message: 'Invalid query type: ', queryType });
+        }
+
         res.status(200).json({ message: 'success', response });
     } catch (error) {
         console.error('Error:', error);
@@ -251,14 +335,14 @@ router.post('/update-session-title', authenticate, async (req, res) => {
     try {
         // Connect to the database and get the collection
         const db = await connectToDatabase();
-        const chatsCollection = db.collection('test1');
+        const chatCollection = db.collection('test1');
 
         console.log('session_id = ', session_id);
         console.log('user_id = ', user_id);
         console.log('title = ', title);
 
         // Update the session title for the specified session_id and user_id
-        const updateResult = await chatsCollection.updateOne(
+        const updateResult = await chatCollection.updateOne(
             { session_id: session_id, user_id: user_id },
             { $set: { title: title } }
         );
@@ -291,9 +375,9 @@ router.post('/delete-session', authenticate, async (req, res) => {
 
         // Connect to the database and get the collection
         const db = await connectToDatabase();
-        const chatsCollection = db.collection('test1');
+        const chatCollection = db.collection('test1');
 
-        const deleteResult = await chatsCollection.deleteOne({ session_id, user_id });
+        const deleteResult = await chatCollection.deleteOne({ session_id, user_id });
         console.log('here3=',deleteResult);
 
         if (deleteResult.deletedCount === 0) {

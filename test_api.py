@@ -1,8 +1,8 @@
 import requests
 
 # Define the API endpoint
-#url = 'https://p3cp.theseed.org/copilot-api/copilot-chat'
-url = 'https://p3cp.theseed.org/copilot-api/argo/chat'
+url = 'https://p3cp.theseed.org/copilot-api/copilot-chat'
+#url = 'https://p3cp.theseed.org/copilot-api/argo/chat'
 
 # Data to be sent to the API (JSON format)
 data = {
