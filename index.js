@@ -7,8 +7,7 @@ const { OpenAI } = require('openai');
 
 const config = require('./config.json');
 
-const chatRoutes = require('./routes/chatRoutes'); // Importing chat-related routes
-const argoRoutes = require('./routes/argoRoutes');
+const chatRoutes = require('./routes/chatRoutes'); // chat-related routes
 const ragRoutes = require('./routes/ragRoutes');
 
 //const port = process.env.PORT || 3000;
@@ -25,24 +24,13 @@ app.use(express.json({ limit: '500kb' })); // limit: '1mb' Parse JSON requests
 //app.use(express.urlencoded({ extended: true, limit: '5kb' }));
 //console.log(app._router.stack.filter(layer => layer.name === 'jsonParser'));
 
-// OpenAI client setup
-/*
-const model = config['model'];
-const openai_client = new OpenAI({
-    apiKey: config['openaiApiKey'],
-    baseURL: config['openaiBaseUrl']
-});
-*/
-
 // Simple route to test API functionality
 app.get('/', (req, res) => {
     res.send('Welcome to my API');
 });
 
 // Register chat-related routes with the Express app
-app.use('/', chatRoutes);
-app.use('/argo', argoRoutes);
-app.use('/rag', ragRoutes);
+app.use('/chatbrc', chatRoutes);
 
 // Start the server
 app.listen(port, () => {
