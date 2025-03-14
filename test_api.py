@@ -1,7 +1,7 @@
 import requests
 
 # Define the API endpoint
-url = 'https://p3cp.theseed.org/copilot-api/copilot-chat'
+url = 'https://dev-3.bv-brc.org/copilot-api/test'
 #url = 'https://p3cp.theseed.org/copilot-api/argo/chat'
 
 # Data to be sent to the API (JSON format)
@@ -12,7 +12,8 @@ data = {
 }
 
 # Send POST request to the API
-response = requests.post(url, json=data, verify=False)
+#response = requests.post(url, json=data, verify=False)
+response = requests.get(url, verify=False)
 
 # Check if the request was successful
 print(f'{response.status_code}')

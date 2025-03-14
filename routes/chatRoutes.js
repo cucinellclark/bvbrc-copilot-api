@@ -6,47 +6,98 @@ const { OpenAI } = require('openai');
 const fetch = require('node-fetch');
 const { ChromaClient } = require("chromadb"); // TODO: Maybe change out for bob's mysql database
 const { connectToDatabase } = require('../database'); // Importing database connection function
+// const { classifyText } = require("../utilities/classify.js");
 const config = require('../config.json');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 
-// TODO: Change to a database or something
-const valid_rag_dbs = ['cancer_papers'];
-
 // OpenAI client setup
 function setupOpenaiClient(apikey, url) {
-    const openai_client = new OpenAI({
-        apiKey: apikey,
-        baseURL: url
-    });
-    return openai_client; 
+    try {
+        const openai_client = new OpenAI({
+            apiKey: apikey,
+            baseURL: url
+        });
+        return openai_client; 
+    } catch (error) {
+        console.error('Error during setupOpenaiClient: ', error);
+        return null;
+    }
 }
 
 // OpenAI client llm query
 async function queryClient(openai_client, model, llmMessages) {
-    console.log('model = ', model);
-    console.log('messages = ', llmMessages);
-    const llm_res = await openai_client.chat.completions.create({
-        model,
-        messages: llmMessages
-    });
-    //console.log(llm_res.choices[0].message.content);
-    const response = llm_res.choices[0].message.content;
-    return response;
+    try {
+        console.log('model = ', model);
+        console.log('messages = ', llmMessages);
+        const llm_res = await openai_client.chat.completions.create({
+            model,
+            messages: llmMessages
+        });
+        //console.log(llm_res.choices[0].message.content);
+        const response = llm_res.choices[0].message.content;
+        return response;
+    } catch (error) {
+        console.error('Error during queryClient: ', error);
+        return null;
+    }
 }
 
-async function queryRequest(url, model, system_prompt, query) {
-    console.log('model = ', model);
+// user because the only one working right now is argo
+async function queryRequestChat(url, model, system_prompt, query) {
+    if (model == 'gpt4o') { // Argo format
+        const response = await queryRequestChatArgo(modelData['endpoint'], model, '', query);
+        return response;
+    } else {
+        try {
+            console.log('model = ', model);
+            
+            const data = {
+                model: model,
+                messages: [
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': query}
+                ],
+                temperature: 1.0
+            };
 
-    const data = {
-        model: model,
-        system: system_prompt,
-        prompt: [query],
-        user: "cucinell",
-        temperature: 1.0
-    };
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(data)
+            });
 
+            if (!response.ok) {
+                throw new Error(`HTTP error! Status: ${response.status}\nReason: ${response.reason}`);
+            }
+
+            const llmData = await response.json();
+            const response_text = llmData.choices[0].message.content;
+            console.log('text = ', response_text);
+
+            return response_text; // Assuming 'response' is a key in the returned JSON
+        } catch (error) {
+            console.error('Error during queryRequestChat:', error);
+            throw error; // Re-throw the error for the caller to handle
+        }
+    }
+}
+
+// user because the only one working right now is argo
+async function queryRequestChatArgo(url, model, system_prompt, query) {
     try {
+        console.log('model = ', model);
+
+        const data = {
+            model: model,
+            system: system_prompt,
+            prompt: [query],
+            user: "cucinell",
+            temperature: 1.0
+        };
+
         const response = await fetch(url, {
             method: 'POST',
             headers: {
@@ -56,27 +107,97 @@ async function queryRequest(url, model, system_prompt, query) {
         });
 
         if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
+            throw new Error(`HTTP error! Status: ${response.status}\nReason: ${response.reason}`);
         }
 
         const llmData = await response.json();
 
         return llmData.response; // Assuming 'response' is a key in the returned JSON
     } catch (error) {
-        console.error('Error during queryRequest:', error);
+        console.error('Error during queryRequestChat:', error);
         throw error; // Re-throw the error for the caller to handle
     }
 }
 
-router.post ('/chat', authenticate, async (req, res) => {
-    const { query, model, session_id, user_id, system_prompt } = req.body;
+async function queryRequestEmbedding(url, model, apiKey, query) {
+    try {
+        const data = {
+            model: model,
+            input: query
+        };
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (apiKey) {
+            headers['Authorization'] = `Bearer ${apiKey}`;
+        }
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: headers, 
+            body: JSON.stringify(data)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}\nReason: ${response.reason}`);
+        }
+
+        const embeddingRes = await response.json();
+
+        const embeddings = embeddingRes['data'][0]['embedding'];
+
+        return embeddings;
+    } catch (error) {
+        console.error('Error during queryRequestEmbedding:', error);
+        throw error; // Re-throw the error for the caller to handle
+    }
+}
+
+async function queryRequestEmbeddingTfidf(query, vectorizer, model_endpoint) {
+    if (!query) {
+        return { error: "Query is required" };
+    }
+    if (!vectorizer) {
+        return { error: "Vectorizer name is required" };
+    }
 
     try {
+        const response = await fetch(model_endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                'query': query,
+                'vectorizer': vectorizer 
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Flask API error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        const embeddings = data['query_embedding'][0]
+        console.log('embeddings2 = ', embeddings);
+        return embeddings 
+    } catch (error) {
+        console.error(error);
+        return{ error: "Internal Server Error" };
+    }
+}
+
+router.post ('/chat', authenticate, async (req, res) => {
+    try {
+        const { query, model, session_id, user_id, system_prompt } = req.body;
+
         const db = await connectToDatabase();
         const modelCollection = db.collection('modelList');
         const chatCollection = db.collection('test1');
         const chatSession = await chatCollection.findOne({ session_id });
         const modelData = await modelCollection.findOne({ model }); 
+
+        // TODO: move to a different spot or use different model?
+        // Classify query: Function calling 
+        // var classification = await classifyText(query); 
+        // console.log('/**** classification = ', classification);
 
         let prompt_query = query;
         if (chatSession) {
@@ -95,9 +216,11 @@ router.post ('/chat', authenticate, async (req, res) => {
         // setup the messages
         const llmMessages = [];
         var request_sysprompt = '';
+        var systemMessage = null;
         if (system_prompt) {
             llmMessages.push({ role: 'system', content: system_prompt });
             request_sysprompt = system_prompt;
+            systemMessage = { message_id: uuidv4(), role: 'system', content: system_prompt, timestamp: new Date() }; 
         }
         llmMessages.push({ role: 'user', content: prompt_query });
 
@@ -112,7 +235,7 @@ router.post ('/chat', authenticate, async (req, res) => {
         }
         else if (queryType == 'request') {
             console.log('request');
-            response = await queryRequest(modelData['endpoint'], model, request_sysprompt, prompt_query);
+            response = await queryRequestChat(modelData['endpoint'], model, request_sysprompt, prompt_query);
         } else {
             res.status(500).json({ message: 'Invalid query type: ', queryType });
         }
@@ -133,11 +256,17 @@ router.post ('/chat', authenticate, async (req, res) => {
         }
 
         // Save messages to database
-        await chatCollection.updateOne(
-            { session_id },
-            { $push: { messages: { $each: [userMessage, assistantMessage] } } }
-        );
-
+        if (systemMessage) {
+            await chatCollection.updateOne(
+                { session_id },
+                { $push: { messages: { $each: [userMessage, systemMessage, assistantMessage] } } }
+            );
+        } else {
+            await chatCollection.updateOne(
+                { session_id },
+                { $push: { messages: { $each: [userMessage, assistantMessage] } } }
+            );
+        }
         res.status(200).json({ message: 'success', response });
 
     } catch (error) {
@@ -146,53 +275,55 @@ router.post ('/chat', authenticate, async (req, res) => {
     }
 });
 
-// TODO: Need to test
 router.post('/rag', authenticate, async (req, res) => {
     console.log('rag method triggered');
-    const { query, rag_db, user_id } = req.body;
-
-    if (!valid_rag_dbs.includes(rag_db)) {
-        res.status(400).json({ message: `Invalid rag_db: ${rag_db}` });
-    }
+    const { query, rag_db, user_id, model } = req.body;
 
     try {
         const db = await connectToDatabase();
-        const modelCollection = db.collection('modelList');
-        const modelData = await modelCollection.findOne({ model });
-        console.log('modeldata =', modelData);
+        // const modelCollection = db.collection('modelList');
+        const ragCollection = db.collection('ragList');
+        // const modelData = await modelCollection.findOne({ model });
+        const ragData = await ragCollection.findOne({ name: rag_db });
+        // console.log('modeldata =', modelData);
+        console.log('ragdata =', ragData);
 
-        const queryType = modelData['queryType'];
-        console.log('queryType = ', queryType);
-        if (queryType == 'client') {
-            const openai_client = setupOpenaiClient(modelData['apiKey'], modelData['endpoint']);
-            // response = await queryClient(openai_client, model, llmMessages);
-            // get embeddings
-            const emb_res = await openai_client.embeddings.create({
-                model: model,
-                input: [query]
-            }); 
-            console.log('emb_res = ',emb_res);
-            const query_embeddings = emb_res.data[0].embedding;
+        const embeddingEndpoint = ragData['model_endpoint'];
+        const embeddingApiKey = ragData['apiKey'];
+        const embeddingQueryType = ragData['queryType'];
+        const embeddingModelName = ragData['model'];
+        const db_url = ragData['db_endpoint'];
+        const db_type = ragData['database_type'];
+
+        // queryRequestEmbedding(url, model, apiKey, query)
+        var query_embeddings = '';
+        if (embeddingQueryType == 'client') {
+            console.log('setup');
         }
-        else if (queryType == 'request') {
-            // TODO: implement when there is an embedding endpoint requiring this mechanism
-            console.log('request');
-            //response = await queryRequest(modelData['endpoint'], model, request_sysprompt, prompt_query);
-            console.error('Error: Have not implemented RAG using node-fetch\n');
-            res.status(500).json({ message: 'Internal server error; not implemented fetch for rag'});
+        else if (embeddingQueryType == 'request') {
+            if (embeddingModelName == 'tfidf') {
+                query_embeddings = await queryRequestEmbeddingTfidf(query, rag_db, embeddingEndpoint);
+            } else {
+                query_embeddings = await queryRequestEmbedding(embeddingEndpoint, embeddingModelName, embeddingApiKey, query);
+            }
+            // query_embeddings = query_embeddings.toString();
         } else {
-            res.status(500).json({ message: 'Invalid query type: ', queryType });
-        } 
+            res.status(500).json({ message: 'Invalid query type: ', embeddingQueryType });
+        }
+
+        // TODO: incorporate a check on query_embeddings
 
         // chroma client and query
-        const chroma = new ChromaClient({ path: modelData['endpoint'] });
+        console.log('query_embeddings = ', query_embeddings);
+        const chroma = new ChromaClient({ path: db_url });
         const collection = await chroma.getCollection({ name: rag_db })
         const results = await collection.query({
             queryEmbeddings: [query_embeddings],
-            nResults: 5
+            nResults: 3
         });
 
         console.log('chroma query results = ', results);
+        console.log('res length = ', results.documents.length);
         res.status(200).json({ message: 'success', documents: results['documents'] });
 
     } catch (error) {
@@ -201,29 +332,75 @@ router.post('/rag', authenticate, async (req, res) => {
     }
 });
 
+/* Function for Olek's demo */
+// curl -X POST "http://lambda5.cels.anl.gov:8121/query" -H "Content-Type:application/json" -d'{"text": "List all alphaviruses"}'
+async function queryLambdaModel(input, rag_flag) {
+    const data = {
+        "text": input,
+        "rag_flag": rag_flag
+    };
+    //  "rag_flag": rag_flag
+    const headers = {
+        'Content-Type': 'application/json'
+    };
+    console.log(data);    
+    const response = await fetch("http://lambda5.cels.anl.gov:8121/query", {
+        method: 'POST',
+        headers: headers, 
+        body: JSON.stringify(data)
+    });
+    console.log('response ', response.ok);    
+
+    if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}\nReason: ${response.reason}`);
+    }
+
+    const response_json = await response.json();
+    const answer = response_json["answer"];
+    return answer;
+}
+
+router.post('/olek-demo', authenticate, async (req, res) => {
+    const { text, rag_flag  } = req.body;
+    console.log('body = ', req.body);
+
+    try {
+        var response = await queryLambdaModel(text, rag_flag);
+        res.status(200).json({ content: response });
+    } catch (error) {
+        console.log(error);
+        res.status(500).json({ message: 'Internal server error in demo', error });
+    }
+});
+
 /**
  * Generate a new unique session ID
  */
 router.get('/start-chat', authenticate, (req, res) => {
-    const sessionId = uuidv4();
-    console.log('Starting new session:', sessionId);
-    res.status(200).json({ message: 'created session id', session_id: sessionId });
+    try {
+        const sessionId = uuidv4();
+        console.log('Starting new session:', sessionId);
+        res.status(200).json({ message: 'created session id', session_id: sessionId });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
 });
 
 /**
  * Retrieve chat history by session ID
  */
 router.get('/get-session-messages', authenticate, async (req, res) => {
-    console.log('Retrieving chat history');
-
-    const session_id = req.query.session_id;
-    console.log('session_id = ', session_id);
-
-    if (!session_id) {
-        return res.status(400).json({ message: 'session_id is required' });
-    }
-
     try {
+        console.log('Retrieving chat history');
+
+        const session_id = req.query.session_id;
+        console.log('session_id = ', session_id);
+
+        if (!session_id) {
+            return res.status(400).json({ message: 'session_id is required' });
+        }
+
         // Connect to the database and get the collection
         const db = await connectToDatabase(); // Assuming connectToDatabase is defined elsewhere
         const chatCollection = db.collection('test1');
@@ -247,18 +424,18 @@ router.get('/get-session-messages', authenticate, async (req, res) => {
  * Retrieve all session IDs for a user
  */
 router.get('/get-all-sessions', authenticate, async (req, res) => {
-    console.log('Retrieving all chat sessions');
-
-    // Extract user_id from query parameters or headers (adjust as needed)
-    const user_id = req.query.user_id;
-    console.log('user_id', user_id);
-
-    // Validate that user_id is provided
-    if (!user_id) {
-        return res.status(400).json({ message: 'user_id is required' });
-    }
-
     try {
+        console.log('Retrieving all chat sessions');
+
+        // Extract user_id from query parameters or headers (adjust as needed)
+        const user_id = req.query.user_id;
+        console.log('user_id', user_id);
+
+        // Validate that user_id is provided
+        if (!user_id) {
+            return res.status(400).json({ message: 'user_id is required' });
+        }
+
         // Connect to the database and get the collection
         const db = await connectToDatabase(); // Assuming connectToDatabase is defined elsewhere
         const chatCollection = db.collection('test1');
@@ -290,12 +467,11 @@ router.post('/put-chat-entry', async (req, res) => {
  * Generate a title from a set of messages 
  */
 router.post('/generate-title-from-messages', authenticate, async (req, res) => {
-    console.log('Generating session title');
-    const { model, messages, user_id } = req.body;
-    const message_str = messages.map(msg => `message: ${msg}`).join('\n\n');
-    const query = `Provide a concise, descriptive title based on the content of the messages:\n\n${message_str}`;
-
     try {
+        console.log('Generating session title');
+        const { model, messages, user_id } = req.body;
+        const message_str = messages.map(msg => `message: ${msg}`).join('\n\n');
+        const query = `Provide a concise, descriptive title based on the content of the messages:\n\n${message_str}`;
         const db = await connectToDatabase();
         const modelCollection = db.collection('modelList');
         const modelData = await modelCollection.findOne({ model });
@@ -311,7 +487,7 @@ router.post('/generate-title-from-messages', authenticate, async (req, res) => {
         }
         else if (queryType == 'request') {
             console.log('request');
-            response = await queryRequest(modelData['endpoint'], model, '', query);
+            response = await queryRequestChat(modelData['endpoint'], model, '', query);
         } else {
             res.status(500).json({ message: 'Invalid query type: ', queryType });
         }
@@ -327,11 +503,10 @@ router.post('/generate-title-from-messages', authenticate, async (req, res) => {
  * Update the session title for a given session_id
  */
 router.post('/update-session-title', authenticate, async (req, res) => {
-
-    console.log('updating session title');
-    const { title, session_id, user_id } = req.body;
-
     try {
+        console.log('updating session title');
+        const { title, session_id, user_id } = req.body;
+
         // Connect to the database and get the collection
         const db = await connectToDatabase();
         const chatCollection = db.collection('test1');
@@ -361,13 +536,13 @@ router.post('/update-session-title', authenticate, async (req, res) => {
 
 /**
  * Delete a session by session_id
- * TODO: UNTESTED
  */
 router.post('/delete-session', authenticate, async (req, res) => {
-    console.log('Deleting session');
-    const { session_id, user_id } = req.body;
-    console.log('session_id = ',session_id);
     try {
+        console.log('Deleting session');
+        const { session_id, user_id } = req.body;
+        console.log('session_id = ',session_id);
+
         if (!session_id) {
             return res.status(400).json({ message: 'Session ID is required' });
         }
@@ -377,7 +552,6 @@ router.post('/delete-session', authenticate, async (req, res) => {
         const chatCollection = db.collection('test1');
 
         const deleteResult = await chatCollection.deleteOne({ session_id, user_id });
-        console.log('here3=',deleteResult);
 
         if (deleteResult.deletedCount === 0) {
             return res.status(404).json({ message: 'Session not found' });
@@ -396,10 +570,10 @@ router.post('/delete-session', authenticate, async (req, res) => {
  * Get user prompts
  */
 router.get('/get-user-prompts?', authenticate, async (req, res) => {
-    console.log('get user prompts');
-    const user_id = req.query.user_id;
-
     try {
+        console.log('get user prompts');
+        const user_id = req.query.user_id;
+
         // Connect to the database and get the collection
         const db = await connectToDatabase();
         const promptsCollection = db.collection('testPrompts');
@@ -422,10 +596,10 @@ router.get('/get-user-prompts?', authenticate, async (req, res) => {
  * Svae a user prompt
  */
 router.post('/save-prompt', authenticate, async (req, res) => {
-    console.log('save user prompt');
-    const { name, text, user_id } = req.body;
-
     try {
+        console.log('save user prompt');
+        const { name, text, user_id } = req.body;
+
         // Connect to the database and get the collection
         const db = await connectToDatabase();
         const promptsCollection = db.collection('testPrompts');
