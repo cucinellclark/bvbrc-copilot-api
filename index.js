@@ -1,6 +1,7 @@
 // index.js
 
 const express = require('express');
+const bodyParser = require('body-parser');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
@@ -18,8 +19,11 @@ const app = express();
 // console.log('Using port', port);
 
 // Middleware setup
+const size_limit = '50mb'
 app.use(cors()); // Enable CORS for all routes
-app.use(express.json({ limit: '500kb' })); // limit: '1mb' Parse JSON requests
+app.use(express.json({ limit: size_limit })); // limit: '1mb' Parse JSON requests
+app.use(bodyParser.json({ limit: size_limit })); // for parsing application/json
+app.use(bodyParser.urlencoded({ extended: true, limit: size_limit })); // for parsing application/x-www-form-urlencoded
 
 //app.use(express.json({ limit: '5kb' }));
 //app.use(express.urlencoded({ extended: true, limit: '5kb' }));

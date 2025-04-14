@@ -6,7 +6,6 @@ const { OpenAI } = require('openai');
 const fetch = require('node-fetch');
 const { ChromaClient } = require("chromadb"); // TODO: Maybe change out for bob's mysql database
 const { connectToDatabase } = require('../database'); // Importing database connection function
-// const { classifyText } = require("../utilities/classify.js");
 const config = require('../config.json');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
@@ -29,7 +28,6 @@ function setupOpenaiClient(apikey, url) {
 async function queryClient(openai_client, model, llmMessages) {
     try {
         console.log('model = ', model);
-        console.log('messages = ', llmMessages);
         const llm_res = await openai_client.chat.completions.create({
             model,
             messages: llmMessages
@@ -176,8 +174,35 @@ async function queryRequestEmbeddingTfidf(query, vectorizer, model_endpoint) {
 
         const data = await response.json();
         const embeddings = data['query_embedding'][0]
-        console.log('embeddings2 = ', embeddings);
         return embeddings 
+    } catch (error) {
+        console.error(error);
+        return{ error: "Internal Server Error" };
+    }
+}
+
+async function count_tokens(query) {
+    if (!query) {
+        return { error: "Query is required" };
+    }
+    try {
+        // TODO: Change, hardcoded flask app location
+        const response = await fetch('http://0.0.0.0:5000/count_tokens', {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },  
+            body: JSON.stringify({
+                'query': query
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Flask API error: ${response.statusText}`);
+        }
+        
+        const data = await response.json();
+        const num_tokens = data['token_count'];
+        return num_tokens
+
     } catch (error) {
         console.error(error);
         return{ error: "Internal Server Error" };
@@ -193,17 +218,12 @@ router.post ('/chat', authenticate, async (req, res) => {
         const chatCollection = db.collection('test1');
         const chatSession = await chatCollection.findOne({ session_id });
         const modelData = await modelCollection.findOne({ model }); 
+        const modelMaxTokens = modelData['max_tokens'] || 1000000;
 
         // TODO: move to a different spot or use different model?
         // Classify query: Function calling 
         // var classification = await classifyText(query); 
         // console.log('/**** classification = ', classification);
-
-        let prompt_query = query;
-        if (chatSession) {
-            const messages = chatSession.messages.map(m => `${m.role}: ${m.content}`).join('\n');
-            prompt_query = `Previous conversation:\n${messages}\n\nNew query:\n${query}\n\n`;
-        }
 
         // check models match
         if (!modelData) {
@@ -211,24 +231,40 @@ router.post ('/chat', authenticate, async (req, res) => {
         }
 
         // create user message object
-        const userMessage = { message_id: uuidv4(), role: 'user', content: query, timestamp: new Date() };
+        const query_token_count = await count_tokens(query);
+        const userMessage = { message_id: uuidv4(), role: 'user', content: query, timestamp: new Date(), token_count: query_token_count };
+
+        let prompt_query = query;
+        let session_token_count = 0;
+        let prompt_token_count = 0;
+        if (chatSession) {
+            const messages = chatSession.messages.map(m => {
+                return `${m.role}: ${m.content}`;
+            }).join('\n');
+            prompt_query = `Previous conversation:\n${messages}\n\nNew query:\n${query}\n\n`;
+        }
+        session_token_count = await count_tokens(prompt_query);
 
         // setup the messages
         const llmMessages = [];
         var request_sysprompt = '';
         var systemMessage = null;
+        let system_token_count = 0;
         if (system_prompt) {
             llmMessages.push({ role: 'system', content: system_prompt });
             request_sysprompt = system_prompt;
-            systemMessage = { message_id: uuidv4(), role: 'system', content: system_prompt, timestamp: new Date() }; 
+            system_token_count = await count_tokens(system_prompt);
+            systemMessage = { message_id: uuidv4(), role: 'system', content: system_prompt, timestamp: new Date(), token_count: system_token_count }; 
         }
         llmMessages.push({ role: 'user', content: prompt_query });
 
+        // check total token count
+        session_token_count += system_token_count;
+        console.log('session token count = ', session_token_count);
+
         // Get response from LLM
-        console.log('modelData', modelData);
         const queryType = modelData['queryType'];
         var response = '';
-        console.log('queryType = ', queryType);
         if (queryType == 'client') {
             const openai_client = setupOpenaiClient(modelData['apiKey'], modelData['endpoint']);
             response = await queryClient(openai_client, model, llmMessages);
@@ -241,7 +277,8 @@ router.post ('/chat', authenticate, async (req, res) => {
         }
 
         // Create response message object
-        const assistantMessage = { message_id: uuidv4(), role: 'assistant', content: response, timestamp: new Date() };
+        const response_token_count = await count_tokens(response);
+        const assistantMessage = { message_id: uuidv4(), role: 'assistant', content: response, timestamp: new Date(), token_count: response_token_count };
 
         // Create or update session in MongoDB
         if (!chatSession) {
@@ -286,7 +323,6 @@ router.post('/rag', authenticate, async (req, res) => {
         // const modelData = await modelCollection.findOne({ model });
         const ragData = await ragCollection.findOne({ name: rag_db });
         // console.log('modeldata =', modelData);
-        console.log('ragdata =', ragData);
 
         const embeddingEndpoint = ragData['model_endpoint'];
         const embeddingApiKey = ragData['apiKey'];
@@ -294,6 +330,8 @@ router.post('/rag', authenticate, async (req, res) => {
         const embeddingModelName = ragData['model'];
         const db_url = ragData['db_endpoint'];
         const db_type = ragData['database_type'];
+
+        const query_token_count = await count_tokens(query);
 
         // queryRequestEmbedding(url, model, apiKey, query)
         var query_embeddings = '';
@@ -314,7 +352,6 @@ router.post('/rag', authenticate, async (req, res) => {
         // TODO: incorporate a check on query_embeddings
 
         // chroma client and query
-        console.log('query_embeddings = ', query_embeddings);
         const chroma = new ChromaClient({ path: db_url });
         const collection = await chroma.getCollection({ name: rag_db })
         const results = await collection.query({
@@ -322,8 +359,6 @@ router.post('/rag', authenticate, async (req, res) => {
             nResults: 3
         });
 
-        console.log('chroma query results = ', results);
-        console.log('res length = ', results.documents.length);
         res.status(200).json({ message: 'success', documents: results['documents'] });
 
     } catch (error) {
