@@ -177,7 +177,7 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
   return { message: 'success', response };
 }
 
-async function handleRagRequest({ query, rag_db }) {
+async function handleRagRequest({ query, rag_db, num_docs }) {
   const db = await connectToDatabase();
   const ragData = await db.collection('ragList').findOne({ name: rag_db });
 
@@ -202,7 +202,7 @@ async function handleRagRequest({ query, rag_db }) {
 
   const chroma = new ChromaClient({ path: db_endpoint });
   const collection = await chroma.getCollection({ name: rag_db });
-  const results = await collection.query({ queryEmbeddings: [query_embeddings], nResults: 3 });
+  const results = await collection.query({ queryEmbeddings: [query_embeddings], nResults: num_docs });
 
   return { message: 'success', documents: results['documents'] };
 }
