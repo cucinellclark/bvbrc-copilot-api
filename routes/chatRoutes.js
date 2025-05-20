@@ -19,6 +19,17 @@ router.post('/chat', authenticate, async (req, res) => {
     }
 });
 
+// ========== CHAT + Image ==========
+router.post('/chat-image', authenticate, async (req, res) => {
+    try {
+        const response = await ChatService.handleChatImageRequest(req.body);
+        res.status(200).json(response);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
 // ========== RAG ==========
 router.post('/rag', authenticate, async (req, res) => {
     try {
@@ -66,6 +77,24 @@ router.get('/get-session-messages', authenticate, async (req, res) => {
     }
 });
 
+router.get('/get-session-title', authenticate, async (req, res) => {
+    try {
+        const session_id = req.query.session_id;
+        if (!session_id) {
+            return res.status(400).json({ message: 'session_id is required' });
+        }
+
+        const db = await connectToDatabase();
+        const chatCollection = db.collection('test1');
+
+        const title = await chatCollection.find({ session_id }).project({ title: 1 }).toArray();
+        res.status(200).json({ title });
+    } catch (error) {
+        console.error('Error retrieving session title:', error);
+        res.status(500).json({ message: 'Failed to retrieve session title', error: error.message });
+    }
+});
+
 router.get('/get-all-sessions', authenticate, async (req, res) => {
     try {
         const user_id = req.query.user_id;
@@ -94,7 +123,7 @@ router.post('/generate-title-from-messages', authenticate, async (req, res) => {
     try {
         const { model, messages, user_id } = req.body;
         const message_str = messages.map(msg => `message: ${msg}`).join('\n\n');
-        const query = `Provide a concise, descriptive title based on the content of the messages:\n\n${message_str}`;
+        const query = `Provide a very short, concise, descriptive title based on the content of the messages:\n\n${message_str}`;
 
         const db = await connectToDatabase();
         const modelCollection = db.collection('modelList');
@@ -194,6 +223,22 @@ router.post('/save-prompt', authenticate, async (req, res) => {
     } catch (error) {
         console.error('Error saving user prompt:', error);
         res.status(500).json({ message: 'Failed saving user prompt', error: error.message });
+    }
+});
+
+// ========== SIMPLIFIED CHAT ==========
+router.post('/chat-only', authenticate, async (req, res) => {
+    try {
+        const { query, model, system_prompt } = req.body;
+        if (!query || !model) {
+            return res.status(400).json({ message: 'query and model are required' });
+        }
+
+        const response = await ChatService.handleChatQuery({ query, model, system_prompt });
+        res.status(200).json({ message: 'success', response });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
     }
 });
 

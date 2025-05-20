@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import os
 import tfidf_vectorizer as tv
 from tokenizer import count_tokens
+from corpus_search.search import search_corpus
 
 app = Flask(__name__)
 
@@ -24,6 +25,19 @@ def tokenize_query():
 @app.route('/test', methods=["GET"])
 def test_server():
     return jsonify({'status': 'success'})
+
+@app.route('/rag_search', methods=["POST"])
+def rag():
+    data = request.get_json()
+    results = search_corpus(
+        data['corpus'],
+        data['query'],
+        data['strategies'],
+        data['top_k'],
+        data['fusion'],
+        data['required_tags'],
+        data['excluded_tags'])
+    return jsonify({ 'result': results }), 200
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0',port=5000)

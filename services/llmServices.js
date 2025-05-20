@@ -3,74 +3,285 @@
 const { OpenAI } = require('openai');
 const fetch = require('node-fetch');
 
+class LLMServiceError extends Error {
+    constructor(message, originalError = null) {
+        super(message);
+        this.name = 'LLMServiceError';
+        this.originalError = originalError;
+    }
+}
+
 function setupOpenaiClient(apiKey, baseURL) {
-    return new OpenAI({ apiKey, baseURL });
+    try {
+        if (!apiKey) {
+            throw new LLMServiceError('API key is required for OpenAI client setup');
+        }
+        return new OpenAI({ apiKey, baseURL });
+    } catch (error) {
+        throw new LLMServiceError('Failed to setup OpenAI client', error);
+    }
 }
 
 async function queryClient(client, model, messages) {
     try {
+        if (!client || !model || !messages) {
+            throw new LLMServiceError('Missing required parameters for queryClient');
+        }
         const res = await client.chat.completions.create({ model, messages });
+        if (!res?.choices?.[0]?.message?.content) {
+            throw new LLMServiceError('Invalid response format from OpenAI API');
+        }
         return res.choices[0].message.content;
-    } catch (err) {
-        console.error('OpenAI client error:', err);
-        return null;
+    } catch (error) {
+        throw new LLMServiceError('Failed to query OpenAI client', error);
     }
 }
 
 async function queryRequestChat(url, model, system_prompt, query) {
-    return model === 'gpt4o'
-        ? await queryRequestChatArgo(url, model, system_prompt, query)
-        : await postJson(url, {
-            model, temperature: 1.0,
-            messages: [{ role: 'system', content: system_prompt }, { role: 'user', content: query }]
-        }).then(res => res?.choices?.[0]?.message?.content || '');
+    try {
+        if (!url || !model || !query) {
+            throw new LLMServiceError('Missing required parameters for queryRequestChat');
+        }
+        return model === 'gpt4o'
+            ? await queryRequestChatArgo(url, model, system_prompt, query)
+            : await postJson(url, {
+                model, temperature: 1.0,
+                messages: [{ role: 'system', content: system_prompt }, { role: 'user', content: query }]
+            }).then(res => {
+                if (!res?.choices?.[0]?.message?.content) {
+                    throw new LLMServiceError('Invalid response format from chat API');
+                }
+                return res.choices[0].message.content;
+            });
+    } catch (error) {
+        throw new LLMServiceError('Failed to query chat API', error);
+    }
 }
 
 async function queryRequestChatArgo(url, model, system_prompt, query) {
-    return postJson(url, {
-        model,
-        prompt: [query],
-        system: system_prompt,
-        user: "cucinell",
-        temperature: 1.0
-    }).then(res => res?.response || '');
+    try {
+        if (!url || !model || !system_prompt || !query) {
+            throw new LLMServiceError('Missing required parameters for queryRequestChatArgo');
+        }
+        const res = await postJson(url, {
+            model,
+            prompt: [query],
+            system: system_prompt,
+            user: "cucinell",
+            temperature: 1.0
+        });
+        if (!res?.response) {
+            throw new LLMServiceError('Invalid response format from Argo API');
+        }
+        return res.response;
+    } catch (error) {
+        throw new LLMServiceError('Failed to query Argo API', error);
+    }
 }
 
 async function queryRequestEmbedding(url, model, apiKey, query) {
-    return postJson(url, { model, input: query }, apiKey)
-        .then(res => res.data?.[0]?.embedding);
+    try {
+        if (!url || !model || !query) {
+            throw new LLMServiceError('Missing required parameters for queryRequestEmbedding');
+        }
+        const res = await postJson(url, { model, input: query }, apiKey);
+        if (!res?.data?.[0]?.embedding) {
+            throw new LLMServiceError('Invalid response format from embedding API');
+        }
+        return res.data[0].embedding;
+    } catch (error) {
+        throw new LLMServiceError('Failed to query embedding API', error);
+    }
 }
 
 async function queryRequestEmbeddingTfidf(query, vectorizer, endpoint) {
-    return postJson(endpoint, { query, vectorizer })
-        .then(res => res.query_embedding?.[0]);
+    try {
+        if (!query || !vectorizer || !endpoint) {
+            throw new LLMServiceError('Missing required parameters for queryRequestEmbeddingTfidf');
+        }
+        const res = await postJson(endpoint, { query, vectorizer });
+        if (!res?.query_embedding?.[0]) {
+            throw new LLMServiceError('Invalid response format from TFIDF embedding API');
+        }
+        return res.query_embedding[0];
+    } catch (error) {
+        throw new LLMServiceError('Failed to query TFIDF embedding API', error);
+    }
+}
+
+async function queryCorpusSearch(query, endpoint, corpus, strategies = null, top_k = 10, fusion = "rrf", required_tags = null, excluded_tags = null) {
+    try {
+        if (!query || !endpoint || !corpus) {
+            throw new LLMServiceError('Missing required parameters for queryCorpusSearch');
+        }
+        const res = await postJson(endpoint, {
+            query,
+            corpus,
+            strategies,
+            top_k,
+            fusion,
+            required_tags,
+            excluded_tags
+        });
+        if (!res?.result) {
+            throw new LLMServiceError('Invalid response format from corpus search API');
+        }
+        return res.result;
+    } catch (error) {
+        throw new LLMServiceError('Failed to query corpus search API', error);
+    }
 }
 
 async function count_tokens(query) {
-    const response = await postJson('http://0.0.0.0:5000/count_tokens', { query });
-    return response?.token_count || 0;
+    try {
+        if (!query) {
+            throw new LLMServiceError('Missing query parameter for count_tokens');
+        }
+        const response = await postJson('http://0.0.0.0:5000/count_tokens', { query });
+        if (typeof response?.token_count !== 'number') {
+            throw new LLMServiceError('Invalid response format from token counting API');
+        }
+        return response.token_count;
+    } catch (error) {
+        throw new LLMServiceError('Failed to count tokens', error);
+    }
 }
 
 async function queryLambdaModel(input, rag_flag) {
-    const res = await postJson('http://lambda5.cels.anl.gov:8121/query', {
-        text: input,
-        rag_flag
-    });
-    return res?.answer || '';
+    try {
+        if (!input) {
+            throw new LLMServiceError('Missing input parameter for queryLambdaModel');
+        }
+        const res = await postJson('http://lambda5.cels.anl.gov:8121/query', {
+            text: input,
+            rag_flag
+        });
+        if (!res?.answer) {
+            throw new LLMServiceError('Invalid response format from Lambda model API');
+        }
+        return res.answer;
+    } catch (error) {
+        throw new LLMServiceError('Failed to query Lambda model', error);
+    }
 }
 
 async function postJson(url, data, apiKey = null) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+    try {
+        if (!url || !data) {
+            throw new LLMServiceError('Missing required parameters for postJson');
+        }
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
-    const res = await fetch(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(data)
-    });
+        const res = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(data)
+        });
 
-    if (!res.ok) throw new Error(`Fetch error: ${res.status} ${res.statusText}`);
-    return await res.json();
+        if (!res.ok) {
+            throw new LLMServiceError(`HTTP error: ${res.status} ${res.statusText}`);
+        }
+        return await res.json();
+    } catch (error) {
+        if (error instanceof LLMServiceError) {
+            throw error;
+        }
+        throw new LLMServiceError('Failed to make POST request', error);
+    }
+}
+
+async function queryChatOnly({ query, model, system_prompt = '', modelData }) {
+    try {
+        if (!query || !model || !modelData) {
+            throw new LLMServiceError('Missing required parameters for queryChatOnly');
+        }
+
+        const llmMessages = [];
+        if (system_prompt) {
+            llmMessages.push({ role: 'system', content: system_prompt });
+        }
+        llmMessages.push({ role: 'user', content: query });
+
+        let response;
+        if (modelData.queryType === 'client') {
+            const openai_client = setupOpenaiClient(modelData.apiKey, modelData.endpoint);
+            response = await queryClient(openai_client, model, llmMessages);
+        } else if (modelData.queryType === 'request') {
+            response = await queryRequestChat(modelData.endpoint, model, system_prompt || '', query);
+        } else {
+            throw new LLMServiceError(`Invalid queryType: ${modelData.queryType}`);
+        }
+
+        return response;
+    } catch (error) {
+        if (error instanceof LLMServiceError) {
+            throw error;
+        }
+        throw new LLMServiceError('Failed to query chat', error);
+    }
+}
+
+async function queryChatImage({ url, model, system_prompt, query, image }) {
+    try {
+        // Parameter validation
+        if (!url || !model || !query || !image) {
+            const missingParams = [];
+            if (!url) missingParams.push('url');
+            if (!model) missingParams.push('model');
+            if (!query) missingParams.push('query');
+            if (!image) missingParams.push('image');
+            throw new LLMServiceError(`Missing required parameters for queryChatImage: ${missingParams.join(', ')}`);
+        }
+
+        const messagesForApi = [];
+        if (system_prompt && system_prompt.trim() !== '') {
+            messagesForApi.push({ role: 'system', content: system_prompt });
+        }
+
+        messagesForApi.push({
+            role: 'user',
+            content: [
+                { type: 'text', text: query },
+                {
+                    type: 'image_url',
+                    image_url: {
+                        url: image // Expects image to be a data URI (e.g., "data:image/jpeg;base64,...") or a public URL
+                    }
+                }
+            ]
+        });
+
+        // Make the POST request
+        const responseData = await postJson(url, {
+            model,
+            messages: messagesForApi,
+            temperature: 0.7, // Consistent with queryRequestChat
+            max_tokens: 1000, // Consistent with queryRequestChat
+            // max_tokens could be a parameter if needed, e.g., max_tokens: 4096
+        });
+
+        // Validate response and extract content
+        if (!responseData?.choices?.[0]?.message?.content) {
+            throw new LLMServiceError('Invalid response format from vision API: Missing content.');
+        }
+        return responseData.choices[0].message.content;
+
+    } catch (error) {
+        if (error instanceof LLMServiceError) {
+            throw error; // Re-throw if already our custom error
+        }
+        // Wrap other errors
+        throw new LLMServiceError(`Failed to query vision API for model ${model}`, error);
+    }
+}
+
+async function safe_count_tokens(query) {
+    try {
+        return await count_tokens(query);
+    } catch (error) {
+        return 0;
+    }
 }
 
 module.exports = {
@@ -80,7 +291,12 @@ module.exports = {
     queryRequestChatArgo,
     queryRequestEmbedding,
     queryRequestEmbeddingTfidf,
+    queryCorpusSearch,
     count_tokens,
-    queryLambdaModel
+    queryLambdaModel,
+    queryChatOnly,
+    queryChatImage,
+    safe_count_tokens,
+    LLMServiceError
 };
 
