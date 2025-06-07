@@ -1,0 +1,12 @@
+{
+  "mongoDBUrl": "mongodb://140.221.78.15:27017",
+  "database": "dev_chat",
+  "collections": {
+    "ragList": "ragList"
+  },
+  "connectionOptions": {
+    "maxPoolSize": 10,
+    "serverSelectionTimeoutMS": 5000,
+    "socketTimeoutMS": 45000
+  }
+} 

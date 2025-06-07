@@ -3,6 +3,10 @@
 const { OpenAI } = require('openai');
 const fetch = require('node-fetch');
 
+// ========================================
+// Error Handling
+// ========================================
+
 class LLMServiceError extends Error {
     constructor(message, originalError = null) {
         super(message);
@@ -10,6 +14,63 @@ class LLMServiceError extends Error {
         this.originalError = originalError;
     }
 }
+
+// ========================================
+// Utility Functions
+// ========================================
+
+async function postJson(url, data, apiKey = null) {
+    try {
+        if (!url || !data) {
+            throw new LLMServiceError('Missing required parameters for postJson');
+        }
+        const headers = { 'Content-Type': 'application/json' };
+        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+        const res = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(data)
+        });
+
+        if (!res.ok) {
+            throw new LLMServiceError(`HTTP error: ${res.status} ${res.statusText}`);
+        }
+        return await res.json();
+    } catch (error) {
+        if (error instanceof LLMServiceError) {
+            throw error;
+        }
+        throw new LLMServiceError('Failed to make POST request', error);
+    }
+}
+
+async function count_tokens(query) {
+    try {
+        if (!query) {
+            throw new LLMServiceError('Missing query parameter for count_tokens');
+        }
+        const response = await postJson('http://0.0.0.0:5000/count_tokens', { query });
+        if (typeof response?.token_count !== 'number') {
+            throw new LLMServiceError('Invalid response format from token counting API');
+        }
+        return response.token_count;
+    } catch (error) {
+        throw new LLMServiceError('Failed to count tokens', error);
+    }
+}
+
+async function safe_count_tokens(query) {
+    try {
+        return await count_tokens(query);
+    } catch (error) {
+        return 0;
+    }
+}
+
+// ========================================
+// OpenAI Client Functions
+// ========================================
 
 function setupOpenaiClient(apiKey, baseURL) {
     try {
@@ -36,6 +97,10 @@ async function queryClient(client, model, messages) {
         throw new LLMServiceError('Failed to query OpenAI client', error);
     }
 }
+
+// ========================================
+// Chat API Functions
+// ========================================
 
 async function queryRequestChat(url, model, system_prompt, query) {
     try {
@@ -76,118 +141,6 @@ async function queryRequestChatArgo(url, model, system_prompt, query) {
         return res.response;
     } catch (error) {
         throw new LLMServiceError('Failed to query Argo API', error);
-    }
-}
-
-async function queryRequestEmbedding(url, model, apiKey, query) {
-    try {
-        if (!url || !model || !query) {
-            throw new LLMServiceError('Missing required parameters for queryRequestEmbedding');
-        }
-        const res = await postJson(url, { model, input: query }, apiKey);
-        if (!res?.data?.[0]?.embedding) {
-            throw new LLMServiceError('Invalid response format from embedding API');
-        }
-        return res.data[0].embedding;
-    } catch (error) {
-        throw new LLMServiceError('Failed to query embedding API', error);
-    }
-}
-
-async function queryRequestEmbeddingTfidf(query, vectorizer, endpoint) {
-    try {
-        if (!query || !vectorizer || !endpoint) {
-            throw new LLMServiceError('Missing required parameters for queryRequestEmbeddingTfidf');
-        }
-        const res = await postJson(endpoint, { query, vectorizer });
-        if (!res?.query_embedding?.[0]) {
-            throw new LLMServiceError('Invalid response format from TFIDF embedding API');
-        }
-        return res.query_embedding[0];
-    } catch (error) {
-        throw new LLMServiceError('Failed to query TFIDF embedding API', error);
-    }
-}
-
-async function queryCorpusSearch(query, endpoint, corpus, strategies = null, top_k = 10, fusion = "rrf", required_tags = null, excluded_tags = null) {
-    try {
-        if (!query || !endpoint || !corpus) {
-            throw new LLMServiceError('Missing required parameters for queryCorpusSearch');
-        }
-        const res = await postJson(endpoint, {
-            query,
-            corpus,
-            strategies,
-            top_k,
-            fusion,
-            required_tags,
-            excluded_tags
-        });
-        if (!res?.result) {
-            throw new LLMServiceError('Invalid response format from corpus search API');
-        }
-        return res.result;
-    } catch (error) {
-        throw new LLMServiceError('Failed to query corpus search API', error);
-    }
-}
-
-async function count_tokens(query) {
-    try {
-        if (!query) {
-            throw new LLMServiceError('Missing query parameter for count_tokens');
-        }
-        const response = await postJson('http://0.0.0.0:5000/count_tokens', { query });
-        if (typeof response?.token_count !== 'number') {
-            throw new LLMServiceError('Invalid response format from token counting API');
-        }
-        return response.token_count;
-    } catch (error) {
-        throw new LLMServiceError('Failed to count tokens', error);
-    }
-}
-
-async function queryLambdaModel(input, rag_flag) {
-    try {
-        if (!input) {
-            throw new LLMServiceError('Missing input parameter for queryLambdaModel');
-        }
-        const res = await postJson('http://lambda5.cels.anl.gov:8121/query', {
-            text: input,
-            rag_flag
-        });
-        if (!res?.answer) {
-            throw new LLMServiceError('Invalid response format from Lambda model API');
-        }
-        return res.answer;
-    } catch (error) {
-        throw new LLMServiceError('Failed to query Lambda model', error);
-    }
-}
-
-async function postJson(url, data, apiKey = null) {
-    try {
-        if (!url || !data) {
-            throw new LLMServiceError('Missing required parameters for postJson');
-        }
-        const headers = { 'Content-Type': 'application/json' };
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-
-        const res = await fetch(url, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(data)
-        });
-
-        if (!res.ok) {
-            throw new LLMServiceError(`HTTP error: ${res.status} ${res.statusText}`);
-        }
-        return await res.json();
-    } catch (error) {
-        if (error instanceof LLMServiceError) {
-            throw error;
-        }
-        throw new LLMServiceError('Failed to make POST request', error);
     }
 }
 
@@ -276,27 +229,125 @@ async function queryChatImage({ url, model, system_prompt, query, image }) {
     }
 }
 
-async function safe_count_tokens(query) {
+// ========================================
+// Embedding Functions
+// ========================================
+
+async function queryRequestEmbedding(url, model, apiKey, query) {
     try {
-        return await count_tokens(query);
+        if (!url || !model || !query) {
+            throw new LLMServiceError('Missing required parameters for queryRequestEmbedding');
+        }
+        const res = await postJson(url, { model, input: query }, apiKey);
+        if (!res?.data?.[0]?.embedding) {
+            throw new LLMServiceError('Invalid response format from embedding API');
+        }
+        return res.data[0].embedding;
     } catch (error) {
-        return 0;
+        throw new LLMServiceError('Failed to query embedding API', error);
     }
 }
 
+async function queryRequestEmbeddingTfidf(query, vectorizer, endpoint) {
+    try {
+        if (!query || !vectorizer || !endpoint) {
+            throw new LLMServiceError('Missing required parameters for queryRequestEmbeddingTfidf');
+        }
+        const res = await postJson(endpoint, { query, vectorizer });
+        if (!res?.query_embedding?.[0]) {
+            throw new LLMServiceError('Invalid response format from TFIDF embedding API');
+        }
+        return res.query_embedding[0];
+    } catch (error) {
+        throw new LLMServiceError('Failed to query TFIDF embedding API', error);
+    }
+}
+
+// ========================================
+// Specialized Service Functions
+// ========================================
+
+async function queryRag(query, rag_db, user_id, model, num_docs, session_id) {
+    try {
+        if (!query || !rag_db || !user_id || !model) {
+            const missingParams = [];
+            if (!query) missingParams.push('query');
+            if (!rag_db) missingParams.push('rag_db');
+            if (!user_id) missingParams.push('user_id');
+            if (!model) missingParams.push('model');
+            throw new LLMServiceError(`Missing required parameters for queryRag: ${missingParams.join(', ')}`);
+        }
+        
+        const res = await postJson('http://0.0.0.0:5000/rag', { 
+            query, 
+            rag_db, 
+            user_id, 
+            model, 
+            num_docs, 
+            session_id 
+        });
+        
+        if (!res) {
+            throw new LLMServiceError('Invalid response format from RAG API: No response received');
+        }
+        
+        return res;
+    } catch (error) {
+        if (error instanceof LLMServiceError) {
+            throw error;
+        }
+        throw new LLMServiceError('Failed to query RAG API', error);
+    }
+}
+
+async function queryLambdaModel(input, rag_flag) {
+    try {
+        if (!input) {
+            throw new LLMServiceError('Missing input parameter for queryLambdaModel');
+        }
+        const res = await postJson('http://lambda5.cels.anl.gov:8121/query', {
+            text: input,
+            rag_flag
+        });
+        if (!res?.answer) {
+            throw new LLMServiceError('Invalid response format from Lambda model API');
+        }
+        return res.answer;
+    } catch (error) {
+        throw new LLMServiceError('Failed to query Lambda model', error);
+    }
+}
+
+// ========================================
+// Module Exports
+// ========================================
+
 module.exports = {
+    postJson,
+
+    // Error handling
+    LLMServiceError,
+    
+    // Utility functions
+    count_tokens,
+    safe_count_tokens,
+    
+    // OpenAI client functions
     setupOpenaiClient,
     queryClient,
+    
+    // Chat API functions
     queryRequestChat,
     queryRequestChatArgo,
-    queryRequestEmbedding,
-    queryRequestEmbeddingTfidf,
-    queryCorpusSearch,
-    count_tokens,
-    queryLambdaModel,
     queryChatOnly,
     queryChatImage,
-    safe_count_tokens,
-    LLMServiceError
+    
+    // Embedding functions
+    queryRequestEmbedding,
+    queryRequestEmbeddingTfidf,
+    
+    // Specialized service functions
+    queryRag,
+    queryLambdaModel
 };
 

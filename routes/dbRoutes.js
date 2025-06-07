@@ -4,6 +4,7 @@ const express = require('express');
 const { OpenAI } = require('openai');
 const fetch = require('node-fetch');
 const { connectToDatabase } = require('../database');
+const { getActiveModels, getActiveRagDatabases } = require('../services/dbUtils');
 const config = require('../config.json');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
@@ -115,15 +116,15 @@ router.post('/get-model-list', authenticate, async (req, res) => {
         if (project_id) {
             pid = project_id
         }
-        const db = await connectToDatabase();
-        const modelCollection = db.collection('modelList');
+        
         // TODO: incorporate filtering by project
-        const all_models = await modelCollection.find({active: true, model_type: 'chat'}).sort({ priority: 1 }).toArray();        
+        const all_models = await getActiveModels('chat');
         console.log(JSON.stringify(all_models));
-        const ragCollection = db.collection('ragList');
+        
         // TODO: incorporate filtering by project
-        const all_rags = await ragCollection.find({active: true}).sort({ priority: 1 }).toArray();
+        const all_rags = await getActiveRagDatabases();
         console.log(JSON.stringify(all_rags));
+        
         res.status(200).json({models: JSON.stringify(all_models), vdb_list: JSON.stringify(all_rags) });
 
     } catch (error) {

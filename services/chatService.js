@@ -8,99 +8,36 @@ const {
   queryRequestChat,
   queryRequestEmbedding,
   queryRequestEmbeddingTfidf,
-  queryCorpusSearch,
   safe_count_tokens,
   queryLambdaModel,
   queryChatOnly,
   queryChatImage,
+  queryRag,
+  postJson,
   LLMServiceError
 } = require('./llmServices');
+const {
+  getModelData,
+  getRagData,
+  getChatSession,
+  createChatSession,
+  addMessagesToSession,
+  getOrCreateChatSession,
+  saveSummary
+} = require('./dbUtils');
 const { ChromaClient } = require('chromadb');
 const fs = require('fs');
 
 const MAX_TOKEN_HEADROOM = 500;
 
-// New helper function to manage context and summarization
-async function manageContextAndSummarize({
-  chatSessionMessages, // existing messages from chatSession.messages
-  currentQueryTokenCount,
-  modelMaxTokens,
-  maxTokenHeadroom, // typically MAX_TOKEN_HEADROOM
-  model, // current model being used, for summarization if specific summary model not defined
-  modelData, // for summary_model, endpoint, apiKey for summarization
-  sessionId, // for saving summary
-  summaryCollection, // db collection for summaries
-  saveChat // boolean, to decide if summary should be saved
-}) {
-  let retainedMessages = [];
-  let summaryTextFromDropped = null;
-
-  if (chatSessionMessages?.length) {
-    let totalContextTokens = currentQueryTokenCount;
-    const tempRetainedMessages = [];
-
-    for (let i = chatSessionMessages.length - 1; i >= 0; i--) {
-      const msg = chatSessionMessages[i];
-      if (msg.token_count === undefined || msg.token_count === null) {
-        // console.warn(`Message ${msg.message_id} in history is missing token_count. Skipping.`);
-        continue; // Or assign a default, e.g., 10 tokens
-      }
-      totalContextTokens += msg.token_count;
-      if (totalContextTokens < modelMaxTokens - maxTokenHeadroom) {
-        tempRetainedMessages.unshift(msg);
-      } else {
-        // This message and older ones are dropped
-        const droppedMessages = chatSessionMessages.slice(0, i + 1);
-        
-        if (droppedMessages.length > 0) {
-          let summaryTokens = 0;
-          const summaryMessagesContent = [];
-          for (let j = droppedMessages.length - 1; j >= 0; j--) {
-            const dropMsg = droppedMessages[j];
-            if (dropMsg.token_count === undefined || dropMsg.token_count === null) continue;
-
-            summaryTokens += dropMsg.token_count;
-            // Ensure summary prompt itself doesn't get too big
-            const summaryModelMaxTokens = modelData.summary_model_max_tokens || modelMaxTokens;
-            if (summaryTokens < summaryModelMaxTokens - maxTokenHeadroom - 50) { // 50 for summary prompt text
-              summaryMessagesContent.unshift(dropMsg);
-            } else {
-              break;
-            }
-          }
-
-          if (summaryMessagesContent.length > 0) {
-            const dropText = summaryMessagesContent.map(m => `${m.role}: ${m.content}`).join('\\n');
-            const summarySystemPrompt = 'Summarize the following conversation very briefly:';
-            const summaryUserQuery = dropText;
-            
-            try {
-              summaryTextFromDropped = await queryChatOnly({
-                query: summaryUserQuery,
-                model: modelData.summary_model || model,
-                system_prompt: summarySystemPrompt,
-                modelData
-              });
-
-              if (saveChat && summaryTextFromDropped) {
-                await summaryCollection.updateOne(
-                  { session_id: sessionId },
-                  { $set: { summary: summaryTextFromDropped, updated_at: new Date() } },
-                  { upsert: true }
-                );
-              }
-            } catch (error) {
-              console.error(`Failed to generate summary for session ${sessionId}:`, error);
-              // Non-fatal, continue without summary for dropped parts
-            }
-          }
-        }
-        break; // Stop adding historical messages
-      }
-    }
-    retainedMessages = tempRetainedMessages;
-  }
-  return { retainedMessages, summaryTextFromDropped };
+// Helper function to create message objects with consistent structure
+function createMessage(role, content, tokenCount) {
+  return {
+    message_id: uuidv4(),
+    role,
+    content,
+    timestamp: new Date()
+  };
 }
 
 function getOpenaiClient(modelData) {
@@ -136,79 +73,36 @@ async function queryRequest(endpoint, model, systemPrompt, query) {
   }
 }
 
-async function handleChatRequest({ query, model, session_id, user_id, system_prompt, save_chat = true }) {
+async function handleChatRequest({ query, model, session_id, user_id, system_prompt, save_chat = true, include_history = true }) {
   try {
-    const db = await connectToDatabase();
-    const modelData = await db.collection('modelList').findOne({ model });
-    const chatCollection = db.collection('test1');
-    const summaryCollection = db.collection('chatSummaries');
+    const modelData = await getModelData(model);
+    const max_tokens = modelData['max_tokens'] || 10000;
+    const chatSession = await getChatSession(session_id);
 
-    if (!modelData) {
-      throw new LLMServiceError(`Invalid model: ${model}`);
-    }
+    const llmMessages = []; // used for queryClient
+    const userMessage = createMessage('user', query);
 
-    const modelMaxTokens = modelData['max_tokens'] || 10000;
-    const query_token_count = await safe_count_tokens(query);
-
-    if (query_token_count > modelMaxTokens - MAX_TOKEN_HEADROOM) {
-      throw new LLMServiceError('Query too long for selected model');
-    }
-
-    const chatSession = await chatCollection.findOne({ session_id });
-
-    const userMessage = {
-      message_id: uuidv4(),
-      role: 'user',
-      content: query,
-      timestamp: new Date(),
-      token_count: query_token_count
-    };
-
-    // Use the new helper function
-    const { retainedMessages, summaryTextFromDropped } = await manageContextAndSummarize({
-      chatSessionMessages: chatSession?.messages,
-      currentQueryTokenCount: query_token_count,
-      modelMaxTokens,
-      maxTokenHeadroom: MAX_TOKEN_HEADROOM,
-      model,
-      modelData,
-      sessionId: session_id,
-      summaryCollection,
-      saveChat: save_chat
-    });
-
-    const fullPromptParts = [];
-    if (summaryTextFromDropped) {
-        fullPromptParts.push(`Summary of earlier conversation: ${summaryTextFromDropped}`);
-    }
-    if (retainedMessages.length > 0) {
-        const historyText = retainedMessages.map(m => `${m.role}: ${m.content}`).join('\\n');
-        fullPromptParts.push(`Previous conversation:\n${historyText}`);
-    }
-    fullPromptParts.push(`New query:\n${query}`);
-    const prompt_query = fullPromptParts.join('\\n\\n');
-
-    const prompt_token_count = await safe_count_tokens(prompt_query);
-
-    const llmMessages = [];
+    // Creates a system message recorded in the conversation history if system_prompt is provided
     let systemMessage = null;
-    let system_token_count = 0;
     if (system_prompt) {
-      system_token_count = await safe_count_tokens(system_prompt);
       llmMessages.push({ role: 'system', content: system_prompt });
-      systemMessage = {
-        message_id: uuidv4(),
-        role: 'system',
-        content: system_prompt,
-        timestamp: new Date(),
-        token_count: system_token_count
-      };
+      systemMessage = createMessage('system', system_prompt);
     }
-    llmMessages.push({ role: 'user', content: prompt_query });
 
-    const total_token_estimate = prompt_token_count + system_token_count;
-    if (total_token_estimate > modelMaxTokens) {
-      throw new LLMServiceError('Total prompt too long for model');
+    // Get the conversation history from the database
+    const chatSessionMessages = chatSession?.messages || [];
+    var messages_list = [];
+    if (chatSessionMessages.length > 0) {
+      messages_list = chatSessionMessages.concat(messages_list);
+    }
+    
+    llmMessages.push({ role: 'user', content: query });
+
+    let prompt_query;
+    if (include_history) {
+      prompt_query = await createQueryFromMessages(query, messages_list, system_prompt || '', max_tokens);
+    } else {
+      prompt_query = query;
     }
 
     let response;
@@ -228,23 +122,11 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
       throw new LLMServiceError('Failed to get model response', error);
     }
 
-    const response_token_count = await safe_count_tokens(response);
-    const assistantMessage = {
-      message_id: uuidv4(),
-      role: 'assistant',
-      content: response,
-      timestamp: new Date(),
-      token_count: response_token_count
-    };
+    const assistantMessage = createMessage('assistant', response);
 
-    if (!chatSession) {
-      await chatCollection.insertOne({
-        session_id,
-        user_id,
-        title: 'Untitled',
-        created_at: new Date(),
-        messages: []
-      });
+    // Use database utility functions for session management
+    if (!chatSession && save_chat) {
+      await createChatSession(session_id, user_id);
     }
 
     const messagesToInsert = systemMessage
@@ -252,10 +134,7 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
       : [userMessage, assistantMessage];
 
     if (save_chat) {
-      await chatCollection.updateOne(
-        { session_id },
-        { $push: { messages: { $each: messagesToInsert } } }
-      );
+      await addMessagesToSession(session_id, messagesToInsert);
     }
 
     return { message: 'success', response };
@@ -267,41 +146,51 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
   }
 }
 
-async function handleRagRequest({ query, rag_db, num_docs }) {
+async function handleRagRequest({ query, rag_db, user_id, model, num_docs, session_id, save_chat = true, include_history = false }) {
   try {
-    const db = await connectToDatabase();
-    const ragData = await db.collection('ragList').findOne({ name: rag_db });
+    const modelData = await getModelData(model);
+    const chatSession = await getChatSession(session_id);
 
-    if (!ragData) {
-      throw new LLMServiceError(`Invalid RAG database: ${rag_db}`);
+    const userMessage = createMessage('user', query, 1);
+
+    var { response, system_prompt } = await queryRag(query, rag_db, user_id, model, num_docs, session_id);
+
+    if (include_history) {
+      // Get the conversation history from the database
+      const chatSessionMessages = chatSession?.messages || [];
+      var messages_list = [];
+      if (chatSessionMessages.length > 0) {
+        messages_list = chatSessionMessages.concat(messages_list);
+      }
+      var tmp_prompt = 'RAG retrieval results:\n' + system_prompt;
+      tmp_prompt = tmp_prompt + '\n\n Generated Response:\n' + response;
+      system_prompt = tmp_prompt;
+      const prompt_query = await createQueryFromMessages(query, messages_list, system_prompt, modelData['max_tokens'] || 10000);
+      response = await handleChatQuery({ query: prompt_query, model, system_prompt: system_prompt || '' });
+    } 
+
+    // Create system message if system_prompt is provided
+    let systemMessage = null;
+    if (system_prompt) {
+      systemMessage = createMessage('system', system_prompt);
     }
 
-    const {
-      name,
-      rag_endpoint,
-      apiKey,
-      queryType,
-      model: embeddingModelName
-    } = ragData;
+    const assistantMessage = createMessage('assistant', response, 1);
 
-    // Hardcoded parameters
-    const strategies = null;  // Default to semantic search
-    const fusion = 'rrf';  // Default fusion method
-    const required_tags = [];  // No required tags by default
-    const excluded_tags = [];  // No excluded tags by default
+    if (!chatSession && save_chat) {
+      await createChatSession(session_id, user_id);
+    }
 
-    const results = await queryCorpusSearch(
-      query,
-      rag_endpoint,
-      name,
-      strategies,
-      num_docs,
-      fusion,
-      required_tags,
-      excluded_tags
-    );
+    // Add system message to the messages array if it exists
+    const messagesToInsert = systemMessage
+      ? [userMessage, systemMessage, assistantMessage]
+      : [userMessage, assistantMessage];
 
-    return { message: 'success', documents: results };
+    if (save_chat) {
+      await addMessagesToSession(session_id, messagesToInsert);
+    }
+
+    return { message: 'success', 'response': response, 'system_prompt': system_prompt };
   } catch (error) {
     if (error instanceof LLMServiceError) {
       throw error;
@@ -310,125 +199,20 @@ async function handleRagRequest({ query, rag_db, num_docs }) {
   }
 }
 
-async function handleRagRequestChroma({ query, rag_db, num_docs }) {
+async function handleChatImageRequest({ query, model, session_id, user_id, image, system_prompt, save_chat = true, include_history = false }) {
   try {
-    const db = await connectToDatabase();
-    const ragData = await db.collection('ragList').findOne({ name: rag_db });
+    const modelData = await getModelData(model);
 
-    if (!ragData) {
-      throw new LLMServiceError(`Invalid RAG database: ${rag_db}`);
-    }
+    const chatSession = await getChatSession(session_id);
 
-    const {
-      model_endpoint,
-      apiKey,
-      queryType,
-      model: embeddingModelName,
-      db_endpoint
-    } = ragData;
+    const userMessage = createMessage('user', query);
 
-    let query_embeddings;
-    try {
-      if (queryType === 'request') {
-        if (embeddingModelName === 'tfidf') {
-          query_embeddings = await queryRequestEmbeddingTfidf(query, rag_db, model_endpoint);
-        } else {
-          query_embeddings = await queryRequestEmbedding(model_endpoint, embeddingModelName, apiKey, query);
-        }
-      } else {
-        throw new LLMServiceError(`Invalid queryType: ${queryType}`);
-      }
-    } catch (error) {
-      if (error instanceof LLMServiceError) {
-        throw error;
-      }
-      throw new LLMServiceError('Failed to get query embeddings', error);
-    }
-
-    const chroma = new ChromaClient({ path: db_endpoint });
-    const collection = await chroma.getCollection({ name: rag_db });
-    const results = await collection.query({ queryEmbeddings: [query_embeddings], nResults: num_docs });
-
-    return { message: 'success', documents: results['documents'] };
-  } catch (error) {
-    if (error instanceof LLMServiceError) {
-      throw error;
-    }
-    throw new LLMServiceError('Failed to handle Chroma RAG request', error);
-  }
-}
-
-async function handleChatImageRequest({ query, model, session_id, user_id, image, system_prompt, save_chat = true }) {
-  try {
-    const db = await connectToDatabase();
-    const modelData = await db.collection('modelList').findOne({ model });
-    const chatCollection = db.collection('test1');
-    const summaryCollection = db.collection('chatSummaries');
-
-    if (!modelData) {
-      throw new LLMServiceError(`Invalid model: ${model}`);
-    }
-
-    const modelMaxTokens = modelData['max_tokens'] || 10000;
-    const current_text_query_token_count = await safe_count_tokens(query);
-
-    if (current_text_query_token_count > modelMaxTokens - MAX_TOKEN_HEADROOM) {
-      throw new LLMServiceError('Query text too long for selected model');
-    }
-
-    const chatSession = await chatCollection.findOne({ session_id });
-
-    const userMessage = { 
-      message_id: uuidv4(),
-      role: 'user',
-      content: query, 
-      timestamp: new Date(),
-      token_count: current_text_query_token_count
-    };
-
-    // Use the new helper function
-    const { retainedMessages, summaryTextFromDropped } = await manageContextAndSummarize({
-      chatSessionMessages: chatSession?.messages,
-      currentQueryTokenCount: current_text_query_token_count,
-      modelMaxTokens,
-      maxTokenHeadroom: MAX_TOKEN_HEADROOM,
-      model,
-      modelData,
-      sessionId: session_id,
-      summaryCollection,
-      saveChat: save_chat
-    });
-
-    const effectiveSystemPromptParts = [];
+    let systemMessage = null;
     if (system_prompt && system_prompt.trim() !== '') {
-      effectiveSystemPromptParts.push(system_prompt);
+      systemMessage = createMessage('system', system_prompt);
     }
-    if (summaryTextFromDropped) {
-      effectiveSystemPromptParts.push(`Summary of earlier conversation parts: ${summaryTextFromDropped}`);
-    }
-    if (retainedMessages.length > 0) {
-      const historyText = retainedMessages.map(m => `${m.role}: ${m.content}`).join('\n');
-      effectiveSystemPromptParts.push(`Previous conversation messages:\n${historyText}`);
-    }
-    const final_system_prompt_for_api = effectiveSystemPromptParts.join('\n\n');
-
-    const final_system_prompt_token_count = await safe_count_tokens(final_system_prompt_for_api);
-
-    const total_text_token_estimate = final_system_prompt_token_count + current_text_query_token_count;
-    if (total_text_token_estimate > modelMaxTokens - MAX_TOKEN_HEADROOM) {
-      throw new LLMServiceError('Combined text prompt (history + query) too long for model, even after potential summarization.');
-    }
-    
-    let systemMessageData = null;
-    if (system_prompt && system_prompt.trim() !== '') {
-      const original_system_prompt_token_count = await safe_count_tokens(system_prompt);
-      systemMessageData = {
-        message_id: uuidv4(),
-        role: 'system',
-        content: system_prompt,
-        timestamp: new Date(),
-        token_count: original_system_prompt_token_count
-      };
+    if (!system_prompt) {
+      system_prompt = "";
     }
 
     let response;
@@ -438,7 +222,7 @@ async function handleChatImageRequest({ query, model, session_id, user_id, image
         model,
         query: query,
         image: image,
-        system_prompt: final_system_prompt_for_api
+        system_prompt: system_prompt
       });
     } catch (error) {
       if (error instanceof LLMServiceError) {
@@ -447,38 +231,38 @@ async function handleChatImageRequest({ query, model, session_id, user_id, image
       throw new LLMServiceError('Failed to get model response for image chat', error);
     }
 
-    const response_token_count = await safe_count_tokens(response);
-
-    const assistantMessage = {
-      message_id: uuidv4(),
-      role: 'assistant',
-      content: response,
-      timestamp: new Date(),
-      token_count: response_token_count
-    };
-
-    if (!chatSession && save_chat) {
-      await chatCollection.insertOne({
-        session_id,
-        user_id,
-        title: 'Untitled',
-        created_at: new Date(),
-        messages: []
-      });
+    if (include_history) {
+      // Get the conversation history from the database
+      const chatSessionMessages = chatSession?.messages || [];
+      var messages_list = [];
+      if (chatSessionMessages.length > 0) {
+        messages_list = chatSessionMessages.concat(messages_list);
+      }
+      var tmp_prompt = 'Image analysis results:\n' + (response || '');
+      tmp_prompt = "Original system prompt:\n" + system_prompt + "\n\n" + tmp_prompt;
+      system_prompt = tmp_prompt;
+      const prompt_query = await createQueryFromMessages(query, messages_list, system_prompt, modelData['max_tokens'] || 10000);
+      response = await handleChatQuery({ query: prompt_query, model, system_prompt: system_prompt || '' });
     }
 
-    if (save_chat) {
-        const messagesToInsert = [];
-        messagesToInsert.push(userMessage);
-        if (systemMessageData) {
-          messagesToInsert.push(systemMessageData);
-        }
-        messagesToInsert.push(assistantMessage);
+    // Create system message if system_prompt is provided
+    if (system_prompt) {
+      systemMessage = createMessage('system', system_prompt);
+    }
 
-        await chatCollection.updateOne(
-          { session_id },
-          { $push: { messages: { $each: messagesToInsert } } }
-        );
+    const assistantMessage = createMessage('assistant', response);
+
+    if (!chatSession && save_chat) {
+      await createChatSession(session_id, user_id);
+    }
+
+    // Add system message to the messages array if it exists
+    const messagesToInsert = systemMessage
+      ? [userMessage, systemMessage, assistantMessage]
+      : [userMessage, assistantMessage];
+
+    if (save_chat) {
+      await addMessagesToSession(session_id, messagesToInsert);
     }
 
     return { message: 'success', response };
@@ -507,13 +291,7 @@ async function handleLambdaDemo(text, rag_flag) {
 
 async function handleChatQuery({ query, model, system_prompt = '' }) {
   try {
-    const db = await connectToDatabase();
-    const modelData = await db.collection('modelList').findOne({ model });
-
-    if (!modelData) {
-      throw new LLMServiceError(`Invalid model: ${model}`);
-    }
-
+    const modelData = await getModelData(model);
     return await queryChatOnly({ query, model, system_prompt, modelData });
   } catch (error) {
     if (error instanceof LLMServiceError) {
@@ -521,6 +299,49 @@ async function handleChatQuery({ query, model, system_prompt = '' }) {
     }
     throw new LLMServiceError('Failed to query chat', error);
   }
+}
+
+function createQueryFromMessages(query, messages, system_prompt, max_tokens) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const data = await postJson('http://0.0.0.0:5000/get_prompt_query', {
+        query: query || '',
+        messages: messages || [],
+        system_prompt: system_prompt || '',
+        max_tokens: max_tokens || 10000
+      });
+
+      resolve(data.prompt_query);
+    } catch (error) {
+      console.error('Error in createQueryFromMessages:', error);
+      
+      // Fallback: format messages according to their roles
+      let formattedMessages = [];
+      
+      // Add system prompt if provided
+      if (system_prompt && system_prompt.trim() !== '') {
+        formattedMessages.push(`System: ${system_prompt}`);
+      }
+      
+      // Format existing messages according to their roles
+      if (messages && messages.length > 0) {
+        messages.forEach(msg => {
+          if (msg.role && msg.content) {
+            const roleLabel = msg.role.charAt(0).toUpperCase() + msg.role.slice(1);
+            formattedMessages.push(`${roleLabel}: ${msg.content}`);
+          }
+        });
+      }
+      
+      // Add the current query as the final message
+      if (query && query.trim() !== '') {
+        formattedMessages.push(`Current User Query: ${query}`);
+      }
+      
+      const fallbackResponse = formattedMessages.join('\n\n');
+      resolve(fallbackResponse);
+    }
+  });
 }
 
 module.exports = {

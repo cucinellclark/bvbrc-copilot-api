@@ -4,6 +4,7 @@ const { OpenAI } = require('openai');
 const fetch = require("node-fetch"); 
 const config = require('../config.json');
 const { connectToDatabase } = require('../database'); // Importing database connection function
+const { getModelData } = require('../../services/dbUtils');
 
 // OpenAI client setup
 function setupOpenaiClient(apikey, url) {
@@ -21,11 +22,7 @@ function setupOpenaiClient(apikey, url) {
 
 async function classifyText(input_text) {
     try {
-
-        const db = await connectToDatabase();
-        const modelCollection = db.collection('modelList');
-        const modelData = await modelCollection.findOne({ model: 'gpt4o' });
-
+        const modelData = await getModelData('gpt4o');
         // const openai_client = setupOpenaiClient(modelData['apiKey'], modelData['endpoint']);
         const url = modelData['endpoint'];
 

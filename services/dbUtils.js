@@ -1,0 +1,354 @@
+const { connectToDatabase } = require('../database');
+const { LLMServiceError } = require('./llmServices');
+
+/**
+ * Get model data from the database
+ * @param {string} model - The model name to look up
+ * @returns {Object} Model data object
+ * @throws {LLMServiceError} If model is not found
+ */
+async function getModelData(model) {
+  try {
+    const db = await connectToDatabase();
+    const modelData = await db.collection('modelList').findOne({ model });
+    
+    if (!modelData) {
+      throw new LLMServiceError(`Invalid model: ${model}`);
+    }
+    
+    return modelData;
+  } catch (error) {
+    if (error instanceof LLMServiceError) {
+      throw error;
+    }
+    throw new LLMServiceError('Failed to get model data', error);
+  }
+}
+
+/**
+ * Get all active models of a specific type
+ * @param {string} modelType - The model type to filter by (e.g., 'chat')
+ * @returns {Array} Array of active model objects
+ */
+async function getActiveModels(modelType = 'chat') {
+  try {
+    const db = await connectToDatabase();
+    const modelCollection = db.collection('modelList');
+    return await modelCollection.find({ active: true, model_type: modelType }).sort({ priority: 1 }).toArray();
+  } catch (error) {
+    throw new LLMServiceError('Failed to get active models', error);
+  }
+}
+
+/**
+ * Get all active RAG databases
+ * @returns {Array} Array of active RAG database objects
+ */
+async function getActiveRagDatabases() {
+  try {
+    const db = await connectToDatabase();
+    const ragCollection = db.collection('ragList');
+    return await ragCollection.find({ active: true }).sort({ priority: 1 }).toArray();
+  } catch (error) {
+    throw new LLMServiceError('Failed to get active RAG databases', error);
+  }
+}
+
+/**
+ * Get RAG database configuration
+ * @param {string} ragDbName - The RAG database name to look up
+ * @returns {Object} RAG database configuration
+ * @throws {LLMServiceError} If RAG database is not found
+ */
+async function getRagData(ragDbName) {
+  try {
+    const db = await connectToDatabase();
+    const ragData = await db.collection('ragList').findOne({ name: ragDbName });
+    
+    if (!ragData) {
+      throw new LLMServiceError(`Invalid RAG database: ${ragDbName}`);
+    }
+    
+    return ragData;
+  } catch (error) {
+    if (error instanceof LLMServiceError) {
+      throw error;
+    }
+    throw new LLMServiceError('Failed to get RAG data', error);
+  }
+}
+
+/**
+ * Get chat session from database
+ * @param {string} sessionId - The session ID to look up
+ * @returns {Object|null} Chat session object or null if not found
+ */
+async function getChatSession(sessionId) {
+  try {
+    if (!sessionId) {
+      return null;
+    }
+    console.log(`[getChatSession] Looking up session: ${sessionId}`);
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    const session = await chatCollection.findOne({ session_id: sessionId });
+    
+    if (session) {
+      console.log(`[getChatSession] Session found: ${sessionId}`);
+    } else {
+      console.log(`[getChatSession] Session not found: ${sessionId}`);
+    }
+    
+    return session;
+  } catch (error) {
+    console.error(`[getChatSession] Error looking up session ${sessionId}:`, error);
+    throw new LLMServiceError('Failed to get chat session', error);
+  }
+}
+
+/**
+ * Get session messages
+ * @param {string} sessionId - The session ID to look up
+ * @returns {Array} Array of messages for the session
+ */
+async function getSessionMessages(sessionId) {
+  try {
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    return await chatCollection.find({ session_id: sessionId }).sort({ timestamp: -1 }).toArray();
+  } catch (error) {
+    throw new LLMServiceError('Failed to get session messages', error);
+  }
+}
+
+/**
+ * Get session title
+ * @param {string} sessionId - The session ID to look up
+ * @returns {Array} Array containing the title
+ */
+async function getSessionTitle(sessionId) {
+  try {
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    return await chatCollection.find({ session_id: sessionId }).project({ title: 1 }).toArray();
+  } catch (error) {
+    throw new LLMServiceError('Failed to get session title', error);
+  }
+}
+
+/**
+ * Get all sessions for a user
+ * @param {string} userId - The user ID to look up
+ * @returns {Array} Array of chat sessions for the user
+ */
+async function getUserSessions(userId) {
+  try {
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    return await chatCollection.find({ user_id: userId }).sort({ created_at: -1 }).toArray();
+  } catch (error) {
+    throw new LLMServiceError('Failed to get user sessions', error);
+  }
+}
+
+/**
+ * Update session title
+ * @param {string} sessionId - The session ID
+ * @param {string} userId - The user ID
+ * @param {string} title - The new title
+ * @returns {Object} Update result
+ */
+async function updateSessionTitle(sessionId, userId, title) {
+  try {
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    return await chatCollection.updateOne(
+      { session_id: sessionId, user_id: userId },
+      { $set: { title } }
+    );
+  } catch (error) {
+    throw new LLMServiceError('Failed to update session title', error);
+  }
+}
+
+/**
+ * Delete a chat session
+ * @param {string} sessionId - The session ID
+ * @param {string} userId - The user ID
+ * @returns {Object} Delete result
+ */
+async function deleteSession(sessionId, userId) {
+  try {
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    return await chatCollection.deleteOne({ session_id: sessionId, user_id: userId });
+  } catch (error) {
+    throw new LLMServiceError('Failed to delete session', error);
+  }
+}
+
+/**
+ * Get user prompts
+ * @param {string} userId - The user ID
+ * @returns {Array} Array of user prompts
+ */
+async function getUserPrompts(userId) {
+  try {
+    const db = await connectToDatabase();
+    const promptsCollection = db.collection('testPrompts');
+    return await promptsCollection.find({ user_id: userId }).sort({ created_at: -1 }).toArray();
+  } catch (error) {
+    throw new LLMServiceError('Failed to get user prompts', error);
+  }
+}
+
+/**
+ * Save a user prompt
+ * @param {string} userId - The user ID
+ * @param {string} name - The prompt name/title
+ * @param {string} text - The prompt text
+ * @returns {Object} Update result
+ */
+async function saveUserPrompt(userId, name, text) {
+  try {
+    const db = await connectToDatabase();
+    const promptsCollection = db.collection('testPrompts');
+    return await promptsCollection.updateOne(
+      { user_id: userId },
+      { $push: { saved_prompts: { title: name, text } } }
+    );
+  } catch (error) {
+    throw new LLMServiceError('Failed to save user prompt', error);
+  }
+}
+
+/**
+ * Create a new chat session
+ * @param {string} sessionId - The session ID
+ * @param {string} userId - The user ID
+ * @param {string} title - The session title (default: 'Untitled')
+ * @returns {Object} Insert result
+ */
+async function createChatSession(sessionId, userId, title = 'Untitled') {
+  try {
+    console.log(`[createChatSession] Creating new session: ${sessionId} for user: ${userId} with title: "${title}"`);
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    
+    const result = await chatCollection.insertOne({
+      session_id: sessionId,
+      user_id: userId,
+      title,
+      created_at: new Date(),
+      messages: []
+    });
+    
+    console.log(`[createChatSession] Session created successfully: ${sessionId}`);
+    return result;
+  } catch (error) {
+    console.error(`[createChatSession] Error creating session ${sessionId} for user ${userId}:`, error);
+    throw new LLMServiceError('Failed to create chat session', error);
+  }
+}
+
+/**
+ * Add messages to a chat session
+ * @param {string} sessionId - The session ID
+ * @param {Array} messages - Array of message objects to add
+ * @returns {Object} Update result
+ */
+async function addMessagesToSession(sessionId, messages) {
+  try {
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    
+    return await chatCollection.updateOne(
+      { session_id: sessionId },
+      { $push: { messages: { $each: messages } } }
+    );
+  } catch (error) {
+    throw new LLMServiceError('Failed to add messages to session', error);
+  }
+}
+
+/**
+ * Get or create chat session
+ * @param {string} sessionId - The session ID
+ * @param {string} userId - The user ID
+ * @param {string} title - The session title (default: 'Untitled')
+ * @returns {Object} Chat session object
+ */
+async function getOrCreateChatSession(sessionId, userId, title = 'Untitled') {
+  try {
+    let chatSession = await getChatSession(sessionId);
+    
+    if (!chatSession) {
+      await createChatSession(sessionId, userId, title);
+      chatSession = await getChatSession(sessionId);
+    }
+    
+    return chatSession;
+  } catch (error) {
+    throw new LLMServiceError('Failed to get or create chat session', error);
+  }
+}
+
+/**
+ * Save or update summary for a session
+ * @param {string} sessionId - The session ID
+ * @param {string} summary - The summary text
+ * @returns {Object} Update result
+ */
+async function saveSummary(sessionId, summary) {
+  try {
+    const db = await connectToDatabase();
+    const summaryCollection = db.collection('chatSummaries');
+    
+    return await summaryCollection.updateOne(
+      { session_id: sessionId },
+      { $set: { summary, updated_at: new Date() } },
+      { upsert: true }
+    );
+  } catch (error) {
+    throw new LLMServiceError('Failed to save summary', error);
+  }
+}
+
+/**
+ * Get database collections commonly used in chat operations
+ * @returns {Object} Object containing database and collection references
+ */
+async function getChatCollections() {
+  try {
+    const db = await connectToDatabase();
+    return {
+      db,
+      chatCollection: db.collection('test1'),
+      summaryCollection: db.collection('chatSummaries'),
+      modelCollection: db.collection('modelList'),
+      ragCollection: db.collection('ragList')
+    };
+  } catch (error) {
+    throw new LLMServiceError('Failed to get database collections', error);
+  }
+}
+
+module.exports = {
+  getModelData,
+  getActiveModels,
+  getActiveRagDatabases,
+  getRagData,
+  getChatSession,
+  getSessionMessages,
+  getSessionTitle,
+  getUserSessions,
+  updateSessionTitle,
+  deleteSession,
+  getUserPrompts,
+  saveUserPrompt,
+  createChatSession,
+  addMessagesToSession,
+  getOrCreateChatSession,
+  saveSummary,
+  getChatCollections
+}; 

@@ -3,15 +3,32 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const { connectToDatabase } = require('../database');
-const authenticate = require('../middleware/auth');
 const ChatService = require('../services/chatService');
-
+const {
+  getModelData,
+  getSessionMessages,
+  getSessionTitle,
+  getUserSessions,
+  updateSessionTitle,
+  deleteSession,
+  getUserPrompts,
+  saveUserPrompt
+} = require('../services/dbUtils');
+const authenticate = require('../middleware/auth');
 const router = express.Router();
 
-// ========== CHAT ==========
+// ========== MAIN CHAT ROUTES ==========
 router.post('/chat', authenticate, async (req, res) => {
     try {
-        const response = await ChatService.handleChatRequest(req.body);
+        const { query, model, session_id, user_id, system_prompt, save_chat = true } = req.body;
+        const response = await ChatService.handleChatRequest({ 
+            query, 
+            model, 
+            session_id, 
+            user_id, 
+            system_prompt, 
+            save_chat 
+        });
         res.status(200).json(response);
     } catch (error) {
         console.error('Error:', error);
@@ -19,21 +36,10 @@ router.post('/chat', authenticate, async (req, res) => {
     }
 });
 
-// ========== CHAT + Image ==========
-router.post('/chat-image', authenticate, async (req, res) => {
-    try {
-        const response = await ChatService.handleChatImageRequest(req.body);
-        res.status(200).json(response);
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ message: 'Internal server error', error });
-    }
-});
-
-// ========== RAG ==========
 router.post('/rag', authenticate, async (req, res) => {
     try {
-        const response = await ChatService.handleRagRequest(req.body);
+        const { query, rag_db, user_id, model, num_docs, session_id } = req.body;
+        const response = await ChatService.handleRagRequest({ query, rag_db, num_docs, user_id, model, session_id });
         res.status(200).json(response);
     } catch (error) {
         console.error('Error:', error);
@@ -41,8 +47,38 @@ router.post('/rag', authenticate, async (req, res) => {
     }
 });
 
-// ========== LAMBDA DEMO ==========
-router.post('/olek-demo', authenticate, async (req, res) => {
+router.post('/rag-distllm', authenticate, async (req, res) => {
+    try {
+        const { query, rag_db, user_id, model, num_docs, session_id } = req.body;
+        const response = await ChatService.handleRagRequestDistllm({ query, rag_db, user_id, model, num_docs, session_id });
+        res.status(200).json(response);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
+router.post('/chat-image', authenticate, async (req, res) => {
+    try {
+        const { query, model, session_id, user_id, system_prompt, save_chat = true, image } = req.body;
+        // const image = req.file ? req.file.buffer.toString('base64') : null;
+        const response = await ChatService.handleChatImageRequest({ 
+            query, 
+            model, 
+            session_id, 
+            user_id, 
+            image, 
+            system_prompt, 
+            save_chat 
+        });
+        res.status(200).json(response);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
+router.post('/demo', authenticate, async (req, res) => {
     try {
         const { text, rag_flag } = req.body;
         const lambdaResponse = await ChatService.handleLambdaDemo(text, rag_flag);
@@ -66,10 +102,7 @@ router.get('/get-session-messages', authenticate, async (req, res) => {
             return res.status(400).json({ message: 'session_id is required' });
         }
 
-        const db = await connectToDatabase();
-        const chatCollection = db.collection('test1');
-
-        const messages = await chatCollection.find({ session_id }).sort({ timestamp: -1 }).toArray();
+        const messages = await getSessionMessages(session_id);
         res.status(200).json({ messages });
     } catch (error) {
         console.error('Error retrieving session messages:', error);
@@ -84,10 +117,7 @@ router.get('/get-session-title', authenticate, async (req, res) => {
             return res.status(400).json({ message: 'session_id is required' });
         }
 
-        const db = await connectToDatabase();
-        const chatCollection = db.collection('test1');
-
-        const title = await chatCollection.find({ session_id }).project({ title: 1 }).toArray();
+        const title = await getSessionTitle(session_id);
         res.status(200).json({ title });
     } catch (error) {
         console.error('Error retrieving session title:', error);
@@ -102,10 +132,7 @@ router.get('/get-all-sessions', authenticate, async (req, res) => {
             return res.status(400).json({ message: 'user_id is required' });
         }
 
-        const db = await connectToDatabase();
-        const chatCollection = db.collection('test1');
-
-        const sessions = await chatCollection.find({ user_id }).sort({ created_at: -1 }).toArray();
+        const sessions = await getUserSessions(user_id);
         res.status(200).json({ sessions });
     } catch (error) {
         console.error('Error retrieving chat sessions:', error);
@@ -123,12 +150,10 @@ router.post('/generate-title-from-messages', authenticate, async (req, res) => {
     try {
         const { model, messages, user_id } = req.body;
         const message_str = messages.map(msg => `message: ${msg}`).join('\n\n');
-        const query = `Provide a very short, concise, descriptive title based on the content of the messages:\n\n${message_str}`;
+        const query = `Provide a very short, concise, descriptive title based on the content ` +
+            `of the messages. Only return the title, no other text.\n\n${message_str}`;
 
-        const db = await connectToDatabase();
-        const modelCollection = db.collection('modelList');
-        const modelData = await modelCollection.findOne({ model });
-
+        const modelData = await getModelData(model);
         const queryType = modelData['queryType'];
         let response;
 
@@ -152,13 +177,7 @@ router.post('/generate-title-from-messages', authenticate, async (req, res) => {
 router.post('/update-session-title', authenticate, async (req, res) => {
     try {
         const { title, session_id, user_id } = req.body;
-        const db = await connectToDatabase();
-        const chatCollection = db.collection('test1');
-
-        const updateResult = await chatCollection.updateOne(
-            { session_id, user_id },
-            { $set: { title } }
-        );
+        const updateResult = await updateSessionTitle(session_id, user_id, title);
 
         if (updateResult.matchedCount === 0) {
             return res.status(404).json({ message: 'Session not found or user not authorized' });
@@ -178,10 +197,7 @@ router.post('/delete-session', authenticate, async (req, res) => {
             return res.status(400).json({ message: 'Session ID is required' });
         }
 
-        const db = await connectToDatabase();
-        const chatCollection = db.collection('test1');
-
-        const deleteResult = await chatCollection.deleteOne({ session_id, user_id });
+        const deleteResult = await deleteSession(session_id, user_id);
 
         if (deleteResult.deletedCount === 0) {
             return res.status(404).json({ message: 'Session not found' });
@@ -197,10 +213,7 @@ router.post('/delete-session', authenticate, async (req, res) => {
 router.get('/get-user-prompts', authenticate, async (req, res) => {
     try {
         const user_id = req.query.user_id;
-        const db = await connectToDatabase();
-        const promptsCollection = db.collection('testPrompts');
-
-        const prompts = await promptsCollection.find({ user_id }).sort({ created_at: -1 }).toArray();
+        const prompts = await getUserPrompts(user_id);
         res.status(200).json({ prompts });
     } catch (error) {
         console.error('Error getting user prompts:', error);
@@ -211,14 +224,7 @@ router.get('/get-user-prompts', authenticate, async (req, res) => {
 router.post('/save-prompt', authenticate, async (req, res) => {
     try {
         const { name, text, user_id } = req.body;
-        const db = await connectToDatabase();
-        const promptsCollection = db.collection('testPrompts');
-
-        const updateResult = await promptsCollection.updateOne(
-            { user_id },
-            { $push: { saved_prompts: { title: name, text } } }
-        );
-
+        const updateResult = await saveUserPrompt(user_id, name, text);
         res.status(200).json({ update_result: updateResult, title: name, content: text });
     } catch (error) {
         console.error('Error saving user prompt:', error);
@@ -234,8 +240,8 @@ router.post('/chat-only', authenticate, async (req, res) => {
             return res.status(400).json({ message: 'query and model are required' });
         }
 
-        const response = await ChatService.handleChatQuery({ query, model, system_prompt });
-        res.status(200).json({ message: 'success', response });
+        const response_json = await ChatService.handleChatQuery({ query, model, system_prompt });
+        res.status(200).json({ message: 'success', response:response_json });
     } catch (error) {
         console.error('Error:', error);
         res.status(500).json({ message: 'Internal server error', error });
