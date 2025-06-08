@@ -8,7 +8,6 @@ const {
   queryRequestChat,
   queryRequestEmbedding,
   queryRequestEmbeddingTfidf,
-  safe_count_tokens,
   queryLambdaModel,
   queryChatOnly,
   queryChatImage,

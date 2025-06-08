@@ -4,6 +4,213 @@ from typing import Optional, Dict, Any
 from mongo_helper import get_rag_config
 from distllm.distllm.chat import distllm_chat
 from corpus_search.search import search_corpus
+from tfidf_vectorizer.tfidf_vectorizer import tfidf_search
+
+def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
+    """
+    Main RAG handler that queries MongoDB for configuration and dispatches to 
+    the appropriate RAG function based on the 'program' field.
+    
+    Args:
+        query: User query string
+        rag_db: RAG database name
+        user_id: User identifier
+        model: Model name to use
+        num_docs: Number of documents to retrieve
+        session_id: Session identifier
+        
+    Returns:
+        Dict containing the response and any additional data
+    """
+    try:
+        # Query MongoDB for RAG configuration
+        rag_config = get_rag_config(rag_db)
+        
+        if not rag_config:
+            raise ValueError(f"RAG database '{rag_db}' not found in MongoDB")
+        
+        # Get the program field to determine which RAG function to call
+        program = rag_config.get('program', 'default')
+        
+        print(f"RAG Handler: Using program '{program}' for rag_db '{rag_db}'")
+
+        if program == 'default':
+            raise ValueError(f"RAG program not found in MongoDB")
+        
+        # Dispatch to appropriate RAG function based on program field
+        if program == 'distllm':
+            return distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config)
+        elif program == 'corpus_search':
+            value = corpus_search_rag(query, rag_db, user_id, model, num_docs, session_id)
+            return value
+        elif program == 'tfidf':
+            return tfidf_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config)
+        else:
+            raise ValueError(f"Unknown RAG program '{program}'. Available programs: distllm, corpus_search, chroma, default")
+            
+    except Exception as e:
+        print(f"Error in rag_handler: {e}")
+        return {
+            'error': str(e),
+            'message': 'Failed to process RAG request',
+            'rag_db': rag_db,
+            'program': program if 'program' in locals() else 'unknown'
+        }
+
+# Returns a JSON object with the following fields:
+# - message: success
+# - response: the response from the RAG
+# - system_prompt: the system prompt used which contains the returned documents
+def distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config):
+    """
+    Handle RAG requests using distLLM implementation.
+    
+    Args:
+        query: User query string
+        rag_db: RAG database name
+        user_id: User identifier  
+        model: Model name to use
+        num_docs: Number of documents to retrieve
+        session_id: Session identifier
+        
+    Returns:
+        Dict containing the response
+    """
+    try:
+        print(f"distLLM RAG: Processing query for rag_db '{rag_db}'")
+        
+        # get the datapath from the rag_config
+        if 'data' not in rag_config:
+            raise ValueError("data not found in rag_config")
+        if 'dataset_dir' not in rag_config['data'] or 'faiss_index_path' not in rag_config['data']:
+            raise ValueError("dataset_dir or faiss_index_path not found in rag_config")
+        data_path = rag_config['data']['dataset_dir']
+        faiss_index_path = rag_config['data']['faiss_index_path']
+
+        # Call the distllm_chat function
+        result_json = distllm_chat(query, rag_db, data_path, faiss_index_path)
+        result = json.loads(result_json)
+        
+        return {
+            'message': 'success',
+            'response': result.get('response', ''),
+            'system_prompt': result.get('system_prompt', '')
+        }
+        
+    except Exception as e:
+        print(f"Error in distllm_rag: {e}")
+        return {
+            'error': str(e),
+            'message': 'Failed to process distLLM RAG request',
+            'program': 'distllm',
+            'rag_db': rag_db
+        }
+
+def tfidf_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config):
+    """
+    Handle RAG requests using TF-IDF implementation.
+    
+    Args:
+        query: User query string
+        rag_db: RAG database name
+        user_id: User identifier
+        model: Model name to use
+        num_docs: Number of documents to retrieve
+        session_id: Session identifier
+
+    Returns:
+        Dict containing the response
+    """
+    try:
+        print(f"TF-IDF RAG: Processing query for rag_db '{rag_db}'")
+
+        embeddings_path = rag_config['data']['embeddings_path']
+        vectorizer_path = rag_config['data']['vectorizer_path']
+        
+        # Call the tfidf_chat function
+        results = tfidf_search(query, rag_db, embeddings_path, vectorizer_path)
+        text_list = [res['text'] for res in results]
+
+        conversation_text = '\n\n'.join(text_list)
+        conversation_text = (
+            f"Here are the top documents "
+            f"retrieved from the corpus. Use these documents to answer the user's question "
+            f"if possible, otherwise just answer the question based on your knowledge:\n\n"
+            f"{conversation_text}"
+        )
+
+        response = chat_only_request(query, model, conversation_text)
+        response['system_prompt'] = conversation_text
+        
+        return response
+
+        
+    except Exception as e:
+        print(f"Error in tfidf_rag: {e}")
+        return {
+            'error': str(e),
+            'message': 'Failed to process TF-IDF RAG request',
+            'program': 'tfidf',
+            'rag_db': rag_db
+        }
+
+
+def corpus_search_rag(query, rag_db, user_id, model, num_docs, session_id):
+    """
+    Handle RAG requests using corpus search implementation.
+    
+    Args:
+        query: User query string
+        rag_db: RAG database name
+        user_id: User identifier
+        model: Model name to use
+        num_docs: Number of documents to retrieve
+        session_id: Session identifier
+        
+    Returns:
+        Dict containing the search results
+    """
+    try:
+        print(f"Corpus Search RAG: Processing query for rag_db '{rag_db}'")
+        
+        # Default parameters for corpus search
+        strategies = None  # Use all available strategies
+        fusion = "rrf"     # Reciprocal rank fusion
+        required_tags = []
+        excluded_tags = []
+        
+        # Call the corpus search function
+        results = search_corpus(
+            corpus=rag_db,
+            query=query,
+            strategies=strategies,
+            top_k=int(num_docs),
+            fusion=fusion,
+            required_tags=required_tags,
+            excluded_tags=excluded_tags
+        )
+
+        conversation_text = '\n\n'.join(results)
+        conversation_text = (
+            f"Here are the top {num_docs} documents "
+            f"retrieved from the corpus. Use these documents to answer the user's question "
+            f"if possible, otherwise just answer the question based on your knowledge:\n\n"
+            f"{conversation_text}"
+        )
+
+        response = chat_only_request(query, model, conversation_text)
+        response['system_prompt'] = conversation_text
+        
+        return response
+        
+    except Exception as e:
+        print(f"Error in corpus_search_rag: {e}")
+        return {
+            'error': str(e),
+            'message': 'Failed to process corpus search RAG request',
+            'program': 'corpus_search',
+            'rag_db': rag_db
+        }
 
 # TODO: change hardcoded port to config
 def chat_only_request(query: str, model: str, system_prompt: Optional[str] = None, 
@@ -90,153 +297,4 @@ def chat_only_request(query: str, model: str, system_prompt: Optional[str] = Non
         return {
             "error": "Invalid JSON response",
             "message": "The server returned an invalid JSON response"
-        }
-
-
-def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
-    """
-    Main RAG handler that queries MongoDB for configuration and dispatches to 
-    the appropriate RAG function based on the 'program' field.
-    
-    Args:
-        query: User query string
-        rag_db: RAG database name
-        user_id: User identifier
-        model: Model name to use
-        num_docs: Number of documents to retrieve
-        session_id: Session identifier
-        
-    Returns:
-        Dict containing the response and any additional data
-    """
-    try:
-        # Query MongoDB for RAG configuration
-        rag_config = get_rag_config(rag_db)
-        
-        if not rag_config:
-            raise ValueError(f"RAG database '{rag_db}' not found in MongoDB")
-        
-        # Get the program field to determine which RAG function to call
-        program = rag_config.get('program', 'default')
-        
-        print(f"RAG Handler: Using program '{program}' for rag_db '{rag_db}'")
-
-        if program == 'default':
-            raise ValueError(f"RAG program not found in MongoDB")
-        
-        # Dispatch to appropriate RAG function based on program field
-        if program == 'distllm':
-            return distllm_rag(query, rag_db, user_id, model, num_docs, session_id)
-        elif program == 'corpus_search':
-            value = corpus_search_rag(query, rag_db, user_id, model, num_docs, session_id)
-            return value
-        else:
-            raise ValueError(f"Unknown RAG program '{program}'. Available programs: distllm, corpus_search, chroma, default")
-            
-    except Exception as e:
-        print(f"Error in rag_handler: {e}")
-        return {
-            'error': str(e),
-            'message': 'Failed to process RAG request',
-            'rag_db': rag_db,
-            'program': program if 'program' in locals() else 'unknown'
-        }
-
-# Returns a JSON object with the following fields:
-# - message: success
-# - response: the response from the RAG
-# - system_prompt: the system prompt used which contains the returned documents
-def distllm_rag(query, rag_db, user_id, model, num_docs, session_id):
-    """
-    Handle RAG requests using distLLM implementation.
-    
-    Args:
-        query: User query string
-        rag_db: RAG database name
-        user_id: User identifier  
-        model: Model name to use
-        num_docs: Number of documents to retrieve
-        session_id: Session identifier
-        
-    Returns:
-        Dict containing the response
-    """
-    try:
-        print(f"distLLM RAG: Processing query for rag_db '{rag_db}'")
-        
-        # Call the distllm_chat function
-        result_json = distllm_chat(query, rag_db)
-        result = json.loads(result_json)
-        
-        return {
-            'message': 'success',
-            'response': result.get('response', ''),
-            'system_prompt': result.get('system_prompt', '')
-        }
-        
-    except Exception as e:
-        print(f"Error in distllm_rag: {e}")
-        return {
-            'error': str(e),
-            'message': 'Failed to process distLLM RAG request',
-            'program': 'distllm',
-            'rag_db': rag_db
-        }
-
-
-def corpus_search_rag(query, rag_db, user_id, model, num_docs, session_id):
-    """
-    Handle RAG requests using corpus search implementation.
-    
-    Args:
-        query: User query string
-        rag_db: RAG database name
-        user_id: User identifier
-        model: Model name to use
-        num_docs: Number of documents to retrieve
-        session_id: Session identifier
-        
-    Returns:
-        Dict containing the search results
-    """
-    try:
-        print(f"Corpus Search RAG: Processing query for rag_db '{rag_db}'")
-        
-        # Default parameters for corpus search
-        strategies = None  # Use all available strategies
-        fusion = "rrf"     # Reciprocal rank fusion
-        required_tags = []
-        excluded_tags = []
-        
-        # Call the corpus search function
-        results = search_corpus(
-            corpus=rag_db,
-            query=query,
-            strategies=strategies,
-            top_k=int(num_docs),
-            fusion=fusion,
-            required_tags=required_tags,
-            excluded_tags=excluded_tags
-        )
-
-        conversation_text = '\n\n'.join(results)
-        conversation_text = (
-            f"Here are the top {num_docs} documents "
-            f"retrieved from the corpus. Use these documents to answer the user's question "
-            f"if possible, otherwise just answer the question based on your knowledge:\n\n"
-            f"{conversation_text}"
-        )
-
-        response = chat_only_request(query, model, conversation_text)
-        response['system_prompt'] = conversation_text
-        
-        return response
-        
-    except Exception as e:
-        print(f"Error in corpus_search_rag: {e}")
-        return {
-            'error': str(e),
-            'message': 'Failed to process corpus search RAG request',
-            'program': 'corpus_search',
-            'rag_db': rag_db
         }
