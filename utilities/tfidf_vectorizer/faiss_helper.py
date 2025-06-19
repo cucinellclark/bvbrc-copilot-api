@@ -5,7 +5,7 @@ import os
 from typing import List, Dict, Any, Optional
 from datasets import Dataset
 
-def faiss_search_dataset(query_embedding: List[List[float]], dataset: Dataset, top_k: int = 10) -> List[Dict[str, Any]]:
+def faiss_search_dataset(query_embedding: List[List[float]], dataset: Dataset, top_k: int = 5) -> List[Dict[str, Any]]:
     """
     Perform FAISS similarity search using query embeddings.
     

@@ -116,6 +116,35 @@ class MongoDBHelper:
             raise Exception(f"Database query error: {e}")
         except Exception as e:
             raise Exception(f"Error getting active RAG configs: {e}")
+
+    def get_rag_configs(self, rag_db_name: str) -> list:
+        """Get all RAG configurations for a specific database name.
+        
+        Args:
+            rag_db_name: Name of the RAG database
+
+        Returns:
+            List of RAG configurations
+        """
+        try:
+            if self.db is None:
+                raise Exception("Database connection not established")
+
+            rag_collection = self.db['ragList']
+            results = list(rag_collection.find({'name': rag_db_name}))
+
+            if results:
+                # Convert ObjectIds to strings
+                for result in results:
+                    if '_id' in result:
+                        result['_id'] = str(result['_id'])
+
+            return results
+            
+        except PyMongoError as e:
+            raise Exception(f"Database query error: {e}")
+        except Exception as e:
+            raise Exception(f"Error getting RAG configs: {e}")
     
     def close(self):
         """Close the MongoDB connection."""
@@ -143,6 +172,21 @@ def get_rag_config(rag_db_name: str) -> Optional[Dict[str, Any]]:
         return helper.get_rag_config_by_name(rag_db_name)
     finally:
         helper.close()
+
+def get_rag_configs(rag_db_name: str) -> list:
+    """Get all RAG configurations for a specific database name.
+    
+    Args:
+        rag_db_name: Name of the RAG database
+
+    Returns:
+        List of RAG configurations
+    """
+    helper = MongoDBHelper()
+    try:
+        return helper.get_rag_configs(rag_db_name)
+    finally:
+        helper.close() 
 
 def get_active_rag_configs() -> list:
     """Get all active RAG configurations.

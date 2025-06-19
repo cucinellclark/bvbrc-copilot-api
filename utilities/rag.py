@@ -1,7 +1,7 @@
 import json
 import requests
 from typing import Optional, Dict, Any
-from mongo_helper import get_rag_config
+from mongo_helper import get_rag_configs
 from distllm.distllm.chat import distllm_chat
 from corpus_search.search import search_corpus
 from tfidf_vectorizer.tfidf_vectorizer import tfidf_search
@@ -24,8 +24,15 @@ def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
     """
     try:
         # Query MongoDB for RAG configuration
-        rag_config = get_rag_config(rag_db)
-        
+        rag_config_list = get_rag_configs(rag_db)
+
+        if not rag_config_list or len(rag_config_list) == 0:
+            raise ValueError(f"No RAG configurations found for database '{rag_db}'")
+
+        if len(rag_config_list) > 1:
+            return multi_rag_handler(query, rag_db, user_id, model, num_docs, session_id, rag_config_list)
+        rag_config = rag_config_list[0]
+
         if not rag_config:
             raise ValueError(f"RAG database '{rag_db}' not found in MongoDB")
         
@@ -57,11 +64,78 @@ def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
             'program': program if 'program' in locals() else 'unknown'
         }
 
+def multi_rag_handler(query, rag_db, user_id, model, num_docs, session_id, rag_config_list):
+    """
+    Handle RAG requests using multiple RAG configurations.
+    
+    Args:
+        query: User query string
+        rag_db: RAG database name
+        user_id: User identifier
+        model: Model name to use
+        num_docs: Number of documents to retrieve
+        session_id: Session identifier
+        rag_config_list: List of RAG configurations
+        
+    Returns:
+        Dict containing the response
+    """
+    try:
+        print(f"Multi-RAG Handler: Processing query for rag_db '{rag_db}'")
+        
+        # Validate that we have exactly 2 RAG configurations
+        if len(rag_config_list) != 2:
+            raise ValueError(f"Multi-RAG handler requires exactly 2 configurations, but got {len(rag_config_list)}")
+        
+        # Extract program fields from both configurations
+        programs = [config.get('program', 'default') for config in rag_config_list]
+        
+        # Validate that we have one 'tfidf' and one 'distllm' configuration
+        if not ('tfidf' in programs and 'distllm' in programs):
+            raise ValueError(f"Multi-RAG handler requires one 'tfidf' and one 'distllm' configuration, but got programs: {programs}")
+        
+        # Initialize a list to store results from each RAG configuration
+        results = []
+        
+        # Process each RAG configuration in the list - TF-IDF first, then distLLM
+        # Sort configurations to ensure tfidf runs before distllm
+        sorted_configs = sorted(rag_config_list, key=lambda x: 0 if x.get('program') == 'tfidf' else 1)
+        tfidf_config = sorted_configs[0]
+        distllm_config = sorted_configs[1]
+        if tfidf_config.get('program') != 'tfidf':
+            raise ValueError(f"TF-IDF configuration is not valid: {tfidf_config}")
+        if distllm_config.get('program') != 'distllm':
+            raise ValueError(f"distLLM configuration is not valid: {distllm_config}")
+        
+        tfidf_results = tfidf_search_only(query, rag_db, user_id, model, num_docs, session_id, tfidf_config)
+        tfidf_string = '\n\n'.join(tfidf_results)
+        distllm_results = distllm_rag(query, rag_db, user_id, model, num_docs, session_id, distllm_config, tfidf_string)
+        documents = distllm_results['documents'] + tfidf_results
+
+        # Combine results from all RAG configurations
+        combined_response = {
+            'message': 'success',
+            'response': distllm_results['response'],
+            'system_prompt': distllm_results['system_prompt'],
+            'documents': documents
+        }
+        
+        return combined_response
+    
+    except Exception as e:
+        print(f"Error in multi_rag_handler: {e}")
+        return {
+            'error': str(e),
+            'message': 'Failed to process multi-RAG request',
+            'rag_db': rag_db,
+            'program': 'multi_rag'
+        }
+
 # Returns a JSON object with the following fields:
 # - message: success
 # - response: the response from the RAG
 # - system_prompt: the system prompt used which contains the returned documents
-def distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config):
+def distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config, extra_context: Optional[str] = None):
     """
     Handle RAG requests using distLLM implementation.
     
@@ -72,7 +146,7 @@ def distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config)
         model: Model name to use
         num_docs: Number of documents to retrieve
         session_id: Session identifier
-        
+        extra_context: Optional extra context to include in the system prompt
     Returns:
         Dict containing the response
     """
@@ -88,13 +162,14 @@ def distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config)
         faiss_index_path = rag_config['data']['faiss_index_path']
 
         # Call the distllm_chat function
-        result_json = distllm_chat(query, rag_db, data_path, faiss_index_path)
+        result_json = distllm_chat(query, rag_db, data_path, faiss_index_path, extra_context)
         result = json.loads(result_json)
         
         return {
             'message': 'success',
             'response': result.get('response', ''),
-            'system_prompt': result.get('system_prompt', '')
+            'system_prompt': result.get('system_prompt', ''),
+            'documents': result.get('documents', [])
         }
         
     except Exception as e:
@@ -141,10 +216,9 @@ def tfidf_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config):
 
         response = chat_only_request(query, model, conversation_text)
         response['system_prompt'] = conversation_text
-        
+        response['documents'] = text_list
         return response
 
-        
     except Exception as e:
         print(f"Error in tfidf_rag: {e}")
         return {
@@ -154,6 +228,28 @@ def tfidf_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config):
             'rag_db': rag_db
         }
 
+def tfidf_search_only(query, rag_db, user_id, model, num_docs, session_id, rag_config):
+    try:
+        print(f"TF-IDF RAG: Processing query for rag_db '{rag_db}'")
+
+        embeddings_path = rag_config['data']['embeddings_path']
+        vectorizer_path = rag_config['data']['vectorizer_path']
+        
+        # Call the tfidf_chat function
+        results = tfidf_search(query, rag_db, embeddings_path, vectorizer_path)
+        text_list = [res['text'] for res in results]
+        
+        return text_list
+
+        
+    except Exception as e:
+        print(f"Error in tfidf_rag: {e}")
+        return {
+            'error': str(e),
+            'message': 'Failed to process TF-IDF search',
+            'program': 'tfidf',
+            'rag_db': rag_db
+        }
 
 def corpus_search_rag(query, rag_db, user_id, model, num_docs, session_id):
     """

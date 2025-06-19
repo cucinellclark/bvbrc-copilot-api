@@ -315,6 +315,72 @@ async function saveSummary(sessionId, summary) {
 }
 
 /**
+ * Rate a conversation session
+ * @param {string} sessionId - The session ID to rate
+ * @param {string} userId - The user ID (for security/validation)
+ * @param {number} rating - The rating value (typically 1-5)
+ * @returns {Object} Update result
+ */
+async function rateConversation(sessionId, userId, rating) {
+  try {
+    console.log(`[rateConversation] Rating session ${sessionId} with rating: ${rating}`);
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+    
+    const result = await chatCollection.updateOne(
+      { session_id: sessionId, user_id: userId },
+      { $set: { rating, rated_at: new Date() } }
+    );
+    
+    if (result.matchedCount === 0) {
+      throw new LLMServiceError(`Session not found or user not authorized: ${sessionId}`);
+    }
+    
+    console.log(`[rateConversation] Session ${sessionId} rated successfully`);
+    return result;
+  } catch (error) {
+    if (error instanceof LLMServiceError) {
+      throw error;
+    }
+    console.error(`[rateConversation] Error rating session ${sessionId}:`, error);
+    throw new LLMServiceError('Failed to rate conversation', error);
+  }
+}
+
+/**
+ * Rate a message
+ * @param {string} userId - The user ID
+ * @param {string} messageId - The message ID
+ * @param {number} rating - The rating value (-1, 0, 1)
+ * @returns {Object} Update result
+ */
+async function rateMessage(userId, messageId, rating) {
+  try {
+    console.log(`[rateMessage] Rating message ${messageId} with rating: ${rating}`);
+    const db = await connectToDatabase();
+    const chatCollection = db.collection('test1');
+
+    const result = await chatCollection.updateOne(
+      { user_id: userId, 'messages.message_id': messageId },
+      { $set: { 'messages.$.rating': rating } }
+    );
+
+    if (result.matchedCount === 0) {
+      throw new LLMServiceError(`Message not found or user not authorized: ${messageId}`);
+    }
+
+    console.log(`[rateMessage] Message ${messageId} rated successfully`);
+    return result;
+  } catch (error) {
+    if (error instanceof LLMServiceError) {
+      throw error;
+    }
+    console.error(`[rateMessage] Error rating message ${messageId}:`, error);
+    throw new LLMServiceError('Failed to rate message', error);
+  }
+}
+
+/**
  * Get database collections commonly used in chat operations
  * @returns {Object} Object containing database and collection references
  */
@@ -350,5 +416,7 @@ module.exports = {
   addMessagesToSession,
   getOrCreateChatSession,
   saveSummary,
+  rateConversation,
+  rateMessage,
   getChatCollections
 }; 

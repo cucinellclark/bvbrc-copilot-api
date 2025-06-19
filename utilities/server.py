@@ -4,6 +4,7 @@ import tfidf_vectorizer as tv
 from tokenizer import count_tokens
 from rag import rag_handler
 from text_utils import create_query_from_messages
+from state_utils import get_path_state
 
 app = Flask(__name__)
 
@@ -33,6 +34,13 @@ def get_prompt_query():
 @app.route('/test', methods=["GET"])
 def test_server():
     return jsonify({'status': 'success'})
+
+@app.route('/get_path_state', methods=["POST"])
+def path_state():
+    data = request.get_json()
+    print('data', data)
+    path_state = get_path_state(data['path'])
+    return jsonify(path_state), 200
 
 @app.route('/rag', methods=["POST"])
 def rag():

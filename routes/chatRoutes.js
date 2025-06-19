@@ -12,7 +12,9 @@ const {
   updateSessionTitle,
   deleteSession,
   getUserPrompts,
-  saveUserPrompt
+  saveUserPrompt,
+  rateConversation,
+  rateMessage
 } = require('../services/dbUtils');
 const authenticate = require('../middleware/auth');
 const router = express.Router();
@@ -232,6 +234,69 @@ router.post('/save-prompt', authenticate, async (req, res) => {
     }
 });
 
+router.post('/rate-conversation', authenticate, async (req, res) => {
+    try {
+        const { session_id, user_id, rating } = req.body;
+        
+        // Validate required fields
+        if (!session_id || !user_id || rating === undefined) {
+            return res.status(400).json({ 
+                message: 'session_id, user_id, and rating are required' 
+            });
+        }
+        
+        // Validate rating value (assuming 1-5 scale)
+        if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+            return res.status(400).json({ 
+                message: 'Rating must be a number between 1 and 5' 
+            });
+        }
+        
+        const result = await rateConversation(session_id, user_id, rating);
+        
+        res.status(200).json({ 
+            message: 'Conversation rated successfully',
+            session_id,
+            rating 
+        });
+    } catch (error) {
+        console.error('Error rating conversation:', error);
+        res.status(500).json({ message: 'Internal server error', error: error.message });
+    }
+});
+
+router.post('/rate-message', authenticate, async (req, res) => {
+    try {
+        const { user_id, message_id, rating } = req.body;
+        
+        // Validate required fields
+        if (!user_id || !message_id || rating === undefined) {
+            return res.status(400).json({ 
+                message: 'user_id, message_id, and rating are required' 
+            });
+        }
+        
+        // Validate rating value: -1, 0, 1
+        if (typeof rating !== 'number' || rating < -1 || rating > 1) {
+            return res.status(400).json({ 
+                message: 'Rating must be a number between -1 and 1' 
+            });
+        }
+        
+        const result = await rateMessage(user_id, message_id, rating);
+        
+        res.status(200).json({ 
+            message: 'Message rated successfully',
+            user_id,
+            message_id,
+            rating 
+        });
+    } catch (error) {
+        console.error('Error rating message:', error);
+        res.status(500).json({ message: 'Internal server error', error: error.message });
+    }
+});
+
 // ========== SIMPLIFIED CHAT ==========
 router.post('/chat-only', authenticate, async (req, res) => {
     try {
@@ -247,5 +312,18 @@ router.post('/chat-only', authenticate, async (req, res) => {
         res.status(500).json({ message: 'Internal server error', error });
     }
 });
+
+// ========== Data Utils ==========
+router.post('/get-path-state', authenticate, async (req, res) => {
+    try {
+        const { path } = req.body;
+        const pathState = await ChatService.getPathState(path);
+        res.status(200).json({ message: 'success', pathState });
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
 
 module.exports = router;

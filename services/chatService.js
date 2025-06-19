@@ -83,7 +83,7 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
 
     // Creates a system message recorded in the conversation history if system_prompt is provided
     let systemMessage = null;
-    if (system_prompt) {
+    if (system_prompt && system_prompt.trim() !== '') {
       llmMessages.push({ role: 'system', content: system_prompt });
       systemMessage = createMessage('system', system_prompt);
     }
@@ -102,6 +102,10 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
       prompt_query = await createQueryFromMessages(query, messages_list, system_prompt || '', max_tokens);
     } else {
       prompt_query = query;
+    }
+
+    if (!system_prompt || system_prompt.trim() === '') {
+      system_prompt = 'You are a helpful assistant that can answer questions.';
     }
 
     let response;
@@ -136,7 +140,12 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
       await addMessagesToSession(session_id, messagesToInsert);
     }
 
-    return { message: 'success', response };
+    return { 
+      message: 'success', 
+      userMessage,
+      assistantMessage,
+      ...(systemMessage && { systemMessage })
+    };
   } catch (error) {
     if (error instanceof LLMServiceError) {
       throw error;
@@ -149,22 +158,19 @@ async function handleRagRequest({ query, rag_db, user_id, model, num_docs, sessi
   try {
     const modelData = await getModelData(model);
     const chatSession = await getChatSession(session_id);
+    const chatSessionMessages = chatSession?.messages || [];
 
     const userMessage = createMessage('user', query, 1);
 
-    var { response, system_prompt } = await queryRag(query, rag_db, user_id, model, num_docs, session_id);
+    var { response, system_prompt, documents } = await queryRag(query, rag_db, user_id, model, num_docs, session_id);
 
-    if (include_history) {
+    // TODO: test this
+    if (include_history && chatSessionMessages.length > 0) {
       // Get the conversation history from the database
-      const chatSessionMessages = chatSession?.messages || [];
-      var messages_list = [];
-      if (chatSessionMessages.length > 0) {
-        messages_list = chatSessionMessages.concat(messages_list);
-      }
       var tmp_prompt = 'RAG retrieval results:\n' + system_prompt;
       tmp_prompt = tmp_prompt + '\n\n Generated Response:\n' + response;
       system_prompt = tmp_prompt;
-      const prompt_query = await createQueryFromMessages(query, messages_list, system_prompt, modelData['max_tokens'] || 10000);
+      const prompt_query = await createQueryFromMessages(query, chatSessionMessages, system_prompt, modelData['max_tokens'] || 10000);
       response = await handleChatQuery({ query: prompt_query, model, system_prompt: system_prompt || '' });
     } 
 
@@ -172,6 +178,9 @@ async function handleRagRequest({ query, rag_db, user_id, model, num_docs, sessi
     let systemMessage = null;
     if (system_prompt) {
       systemMessage = createMessage('system', system_prompt);
+      if (documents && documents.length > 0) {
+        systemMessage.documents = documents;
+      }
     }
 
     const assistantMessage = createMessage('assistant', response, 1);
@@ -189,7 +198,12 @@ async function handleRagRequest({ query, rag_db, user_id, model, num_docs, sessi
       await addMessagesToSession(session_id, messagesToInsert);
     }
 
-    return { message: 'success', 'response': response, 'system_prompt': system_prompt };
+    return { 
+      message: 'success', 
+      userMessage,
+      assistantMessage,
+      ...(systemMessage && { systemMessage })
+    };
   } catch (error) {
     if (error instanceof LLMServiceError) {
       throw error;
@@ -264,7 +278,12 @@ async function handleChatImageRequest({ query, model, session_id, user_id, image
       await addMessagesToSession(session_id, messagesToInsert);
     }
 
-    return { message: 'success', response };
+    return { 
+      message: 'success', 
+      userMessage,
+      assistantMessage,
+      ...(systemMessage && { systemMessage })
+    };
   } catch (error) {
     if (error instanceof LLMServiceError) {
       throw error;
@@ -343,6 +362,18 @@ function createQueryFromMessages(query, messages, system_prompt, max_tokens) {
   });
 }
 
+async function getPathState(path) {
+  try {
+    const response = await postJson('http://0.0.0.0:5000/get_path_state', { path: path });
+    return response;
+  } catch (error) {
+    if (error instanceof LLMServiceError) {
+      throw error;
+    }
+    throw new LLMServiceError('Failed to get path state', error);
+  }
+}
+
 module.exports = {
   handleChatRequest,
   handleRagRequest,
@@ -351,6 +382,7 @@ module.exports = {
   queryModel,
   queryRequest,
   handleChatQuery,
-  handleChatImageRequest
+  handleChatImageRequest,
+  getPathState
 };
 
