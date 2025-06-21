@@ -75,176 +75,151 @@ async function queryRequest(endpoint, model, systemPrompt, query) {
   }
 }
 
-async function handleCopilotRequest({ 
-  query, 
-  model, 
-  session_id, 
-  user_id, 
-  system_prompt, 
-  save_chat = true, 
-  include_history = true,
-  // RAG-specific parameters
-  rag_db,
-  num_docs,
-  // Image-specific parameters
-  image
-}) {
+async function runModel(ctx, modelData) {
+  if (ctx.image) {
+    return await queryChatImage({
+      url: modelData.endpoint,
+      model: ctx.model,
+      query: ctx.prompt,
+      image: ctx.image,
+      system_prompt: ctx.systemPrompt
+    });
+  }
+  if (modelData.queryType === 'client') {
+    const client = setupOpenaiClient(modelData.apiKey, modelData.endpoint);
+    return await queryClient(client, ctx.model, [
+      { role: 'system', content: ctx.systemPrompt },
+      { role: 'user', content: ctx.prompt }
+    ]);
+  }
+  if (modelData.queryType === 'request') {
+    return await queryRequestChat(
+      modelData.endpoint,
+      ctx.model,
+      ctx.systemPrompt,
+      ctx.prompt
+    );
+  }
+  throw new LLMServiceError(`Invalid queryType: ${modelData.queryType}`);
+}
+
+async function handleCopilotRequest(opts) {
   try {
-    const modelData = await getModelData(model);
-    const max_tokens = modelData['max_tokens'] || 10000;
+    const {
+      query,
+      model,
+      session_id,
+      user_id,
+      system_prompt,
+      save_chat = true,
+      include_history = true,
+      rag_db = null,
+      num_docs,
+      image = null
+    } = opts;
+
+    const modelData   = await getModelData(model);
+    const max_tokens  = modelData.max_tokens || 10000;
     const chatSession = await getChatSession(session_id);
-    const chatSessionMessages = chatSession?.messages || [];
+    const history     = chatSession?.messages || [];
 
-    // Initialize common variables
-    const embedding_url = config['embedding_url'];
-    const embedding_model = config['embedding_model'];
-    const embedding_apiKey = config['embedding_apiKey'];
-    
-    const userMessage = createMessage('user', query);
-    let user_embedding;
-    let documents = null;
-    let response;
-    let systemMessage = null;
+    const embedUrl   = config.embedding_url;
+    const embedModel = config.embedding_model;
+    const embedKey   = config.embedding_apiKey;
 
-    // Determine request type and handle accordingly
-    const isRagRequest = rag_db !== null;
-    const isImageRequest = image !== null;
+    const ctx = {
+      prompt: query,
+      systemPrompt: system_prompt,
+      model,
+      image,
+      ragDocs: null,
+      user_embedding: null
+    };
 
-    if (isRagRequest) {
-      // RAG Request handling
-      const ragResult = await queryRag(query, rag_db, user_id, model, num_docs, session_id);
-      documents = ragResult.documents || ['No documents found'];
-      user_embedding = ragResult.embedding;
-
-      // Construct RAG prompt
-      let prompt_query = 'RAG retrieval results:\n' + documents.join('\n\n');
-      prompt_query = "Current User Query: " + query + "\n\n" + prompt_query;
-      
-      const rag_system_prompt = "You are a helpful AI assistant that can answer questions." + 
-        "You are given a list of documents and a user query. " +
-        "You need to answer the user query based on the documents if those documents are relevant to the user query. " +
-        "If they are not relevant, you need to answer the user query based on your knowledge. ";
-
-      response = await handleChatQuery({ 
-        query: prompt_query, 
-        model, 
-        system_prompt: rag_system_prompt 
-      });
-
-      if (!response) {
-        response = 'No response from model';
-      }
-
-      // Create system message with documents
-      systemMessage = createMessage('system', rag_system_prompt);
-      if (documents && documents.length > 0) {
-        systemMessage.documents = documents;
-      }
-
-    } else if (isImageRequest) {
-      // Image Request handling
-      user_embedding = await queryRequestEmbedding(embedding_url, embedding_model, embedding_apiKey, query);
-      
-      if (!system_prompt) {
-        system_prompt = "";
-      }
-
-      response = await queryChatImage({
-        url: modelData.endpoint,
-        model,
-        query: query,
-        image: image,
-        system_prompt: system_prompt
-      });
-
-      if (system_prompt && system_prompt.trim() !== '') {
-        systemMessage = createMessage('system', system_prompt);
-      }
-
+    // Handle RAG retrieval if rag_db is provided
+    if (rag_db) {
+      const { documents = ['No documents found'], embedding } =
+        await queryRag(query, rag_db, user_id, model, num_docs, session_id);
+      ctx.ragDocs        = documents;
+      ctx.user_embedding = embedding;
+      ctx.systemPrompt  += ' Answer using the provided documents if relevant.';
     } else {
-      // Regular Chat Request handling
-      user_embedding = await queryRequestEmbedding(embedding_url, embedding_model, embedding_apiKey, query);
-      
-      const llmMessages = [];
-      
-      // Handle system prompt
-      if (system_prompt && system_prompt.trim() !== '') {
-        llmMessages.push({ role: 'system', content: system_prompt });
-        systemMessage = createMessage('system', system_prompt);
-      }
-
-      llmMessages.push({ role: 'user', content: query });
-
-      let prompt_query;
-      if (include_history) {
-        prompt_query = await createQueryFromMessages(query, chatSessionMessages, system_prompt || '', max_tokens);
-      } else {
-        prompt_query = query;
-      }
-
-      if (!system_prompt || system_prompt.trim() === '') {
-        system_prompt = 'You are a helpful assistant that can answer questions.';
-      }
-
-      // Query the model based on queryType
-      if (modelData.queryType === 'client') {
-        const openai_client = setupOpenaiClient(modelData.apiKey, modelData.endpoint);
-        response = await queryClient(openai_client, model, llmMessages);
-      } else if (modelData.queryType === 'request') {
-        response = await queryRequestChat(modelData.endpoint, model, system_prompt || '', prompt_query);
-      } else {
-        throw new LLMServiceError(`Invalid queryType: ${modelData.queryType}`);
-      }
+      // Get user embedding if not using RAG
+      ctx.user_embedding = await queryRequestEmbedding(
+        embedUrl,
+        embedModel,
+        embedKey,
+        query
+      );
     }
 
-    // Common post-processing for all request types
+    // Build the prompt based on history and RAG settings
+    let finalPrompt = query;
+    
+    if (include_history && history.length > 0) {
+      // Create query from messages to include chat history
+      finalPrompt = await createQueryFromMessages(
+        query,
+        history,
+        ctx.systemPrompt,
+        max_tokens
+      );
+    }
+    
+    if (rag_db && ctx.ragDocs) {
+      // If we have both history and RAG, combine them appropriately
+      if (include_history && history.length > 0) {
+        // History is already incorporated in finalPrompt, now add RAG documents
+        finalPrompt = `${finalPrompt}\n\nRAG retrieval results:\n${ctx.ragDocs.join('\n\n')}`;
+      } else {
+        // Only RAG, no history
+        finalPrompt = `Current User Query: ${query}\n\nRAG retrieval results:\n${ctx.ragDocs.join('\n\n')}`;
+      }
+    }
+    
+    ctx.prompt = finalPrompt;
+
+    const response = await runModel(ctx, modelData);
+
+    const userMessage      = createMessage('user', query);
     const assistantMessage = createMessage('assistant', response);
-    const assistant_embedding = await queryRequestEmbedding(embedding_url, embedding_model, embedding_apiKey, response);
+    const assistantEmb     = await queryRequestEmbedding(
+      embedUrl,
+      embedModel,
+      embedKey,
+      response
+    );
 
-    // Create session if needed
-    if (!chatSession && save_chat) {
-      await createChatSession(session_id, user_id);
+    let systemMessage = null;
+    if (ctx.systemPrompt.trim()) {
+      systemMessage = createMessage('system', ctx.systemPrompt);
+      if (ctx.ragDocs) systemMessage.documents = ctx.ragDocs;
     }
 
-    // Prepare messages to insert
-    const messagesToInsert = systemMessage
+    if (!chatSession && save_chat) await createChatSession(session_id, user_id);
+
+    const toInsert = systemMessage
       ? [userMessage, systemMessage, assistantMessage]
       : [userMessage, assistantMessage];
 
-    // Save to database if requested
     if (save_chat) {
-      await addMessagesToSession(session_id, messagesToInsert);
-
-      if (user_embedding) {
-        await storeMessageEmbedding(session_id, userMessage.message_id, user_embedding);
-      }
-      if (assistant_embedding) {
-        await storeMessageEmbedding(session_id, assistantMessage.message_id, assistant_embedding);
-      }
+      await addMessagesToSession(session_id, toInsert);
+      if (ctx.user_embedding)
+        await storeMessageEmbedding(session_id, userMessage.message_id, ctx.user_embedding);
+      await storeMessageEmbedding(session_id, assistantMessage.message_id, assistantEmb);
     }
 
-    return { 
-      message: 'success', 
+    return {
+      message: 'success',
       userMessage,
       assistantMessage,
       ...(systemMessage && { systemMessage })
     };
-
   } catch (error) {
     if (error instanceof LLMServiceError) {
       throw error;
     }
-    
-    // Handle specific error cases for image requests
-    if (image && (error.message.includes('Failed to get model response for image chat') || 
-                  error.message.includes('Invalid model') || 
-                  error.message.includes('Query text too long') || 
-                  error.message.includes('Combined text prompt'))) {
-      throw error;
-    }
-    
-    const requestType = isRagRequest ? 'RAG' : (isImageRequest ? 'image chat' : 'chat');
-    throw new LLMServiceError(`Failed to handle ${requestType} request`, error);
+    throw new LLMServiceError('Failed to handle copilot request', error);
   }
 }
 
