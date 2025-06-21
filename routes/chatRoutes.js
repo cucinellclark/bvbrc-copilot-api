@@ -20,6 +20,17 @@ const authenticate = require('../middleware/auth');
 const router = express.Router();
 
 // ========== MAIN CHAT ROUTES ==========
+router.post('/copilot', authenticate, async (req, res) => {
+    try {
+        const { query, model, session_id, user_id, system_prompt, save_chat = true, include_history = true, rag_db = null, num_docs = null, image = null } = req.body;
+        const response = await ChatService.handleCopilotRequest({ query, model, session_id, user_id, system_prompt, save_chat, include_history, rag_db, num_docs, image });
+        res.status(200).json(response);
+    } catch (error) {
+        console.error('Error:', error);
+        res.status(500).json({ message: 'Internal server error', error });
+    }
+});
+
 router.post('/chat', authenticate, async (req, res) => {
     try {
         const { query, model, session_id, user_id, system_prompt, save_chat = true } = req.body;

@@ -115,7 +115,13 @@ async function getSessionMessages(sessionId) {
   try {
     const db = await connectToDatabase();
     const chatCollection = db.collection('test1');
-    return await chatCollection.find({ session_id: sessionId }).sort({ timestamp: -1 }).toArray();
+    return await chatCollection
+      .find({ session_id: sessionId })
+      .project({
+        'messages.embedding': 0
+      })
+      .sort({ timestamp: -1 })
+      .toArray();
   } catch (error) {
     throw new LLMServiceError('Failed to get session messages', error);
   }
@@ -381,6 +387,84 @@ async function rateMessage(userId, messageId, rating) {
 }
 
 /**
+ * Store message embedding in database
+ * @param {string} sessionId - The session ID
+ * @param {string} messageId - The message ID
+ * @param {Array<number>} embedding - The 1D vector embedding (array of numbers)
+ * @returns {Object} Insert result
+ */
+async function storeMessageEmbedding(sessionId, messageId, embedding) {
+  try {
+    console.log(`[storeMessageEmbedding] Storing embedding for message ${messageId} in session ${sessionId}`);
+    const db = await connectToDatabase();
+    const embeddingsCollection = db.collection('test_embeddings');
+    
+    const result = await embeddingsCollection.insertOne({
+      session_id: sessionId,
+      message_id: messageId,
+      embedding,
+      created_at: new Date()
+    });
+    
+    console.log(`[storeMessageEmbedding] Embedding stored successfully for message ${messageId}`);
+    return result;
+  } catch (error) {
+    console.error(`[storeMessageEmbedding] Error storing embedding for message ${messageId}:`, error);
+    throw new LLMServiceError('Failed to store message embedding', error);
+  }
+}
+
+/**
+ * Get all embeddings for a session
+ * @param {string} sessionId - The session ID to look up
+ * @returns {Array} Array of embedding objects for the session
+ */
+async function getEmbeddingsBySessionId(sessionId) {
+  try {
+    console.log(`[getEmbeddingsBySessionId] Retrieving embeddings for session: ${sessionId}`);
+    const db = await connectToDatabase();
+    const embeddingsCollection = db.collection('test_embeddings');
+    
+    const embeddings = await embeddingsCollection
+      .find({ session_id: sessionId })
+      .sort({ created_at: 1 })
+      .toArray();
+    
+    console.log(`[getEmbeddingsBySessionId] Found ${embeddings.length} embeddings for session ${sessionId}`);
+    return embeddings;
+  } catch (error) {
+    console.error(`[getEmbeddingsBySessionId] Error retrieving embeddings for session ${sessionId}:`, error);
+    throw new LLMServiceError('Failed to get embeddings by session ID', error);
+  }
+}
+
+/**
+ * Get embedding by message ID
+ * @param {string} messageId - The message ID to look up
+ * @returns {Object|null} Embedding object or null if not found
+ */
+async function getEmbeddingByMessageId(messageId) {
+  try {
+    console.log(`[getEmbeddingByMessageId] Retrieving embedding for message: ${messageId}`);
+    const db = await connectToDatabase();
+    const embeddingsCollection = db.collection('test_embeddings');
+    
+    const embedding = await embeddingsCollection.findOne({ message_id: messageId });
+    
+    if (embedding) {
+      console.log(`[getEmbeddingByMessageId] Embedding found for message ${messageId}`);
+    } else {
+      console.log(`[getEmbeddingByMessageId] Embedding not found for message ${messageId}`);
+    }
+    
+    return embedding;
+  } catch (error) {
+    console.error(`[getEmbeddingByMessageId] Error retrieving embedding for message ${messageId}:`, error);
+    throw new LLMServiceError('Failed to get embedding by message ID', error);
+  }
+}
+
+/**
  * Get database collections commonly used in chat operations
  * @returns {Object} Object containing database and collection references
  */
@@ -418,5 +502,8 @@ module.exports = {
   saveSummary,
   rateConversation,
   rateMessage,
+  storeMessageEmbedding,
+  getEmbeddingsBySessionId,
+  getEmbeddingByMessageId,
   getChatCollections
 }; 

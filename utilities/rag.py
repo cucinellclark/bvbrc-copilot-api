@@ -3,7 +3,6 @@ import requests
 from typing import Optional, Dict, Any
 from mongo_helper import get_rag_configs
 from distllm.distllm.chat import distllm_chat
-from corpus_search.search import search_corpus
 from tfidf_vectorizer.tfidf_vectorizer import tfidf_search
 
 def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
@@ -43,15 +42,12 @@ def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
 
         if program == 'default':
             raise ValueError(f"RAG program not found in MongoDB")
-        
+
         # Dispatch to appropriate RAG function based on program field
         if program == 'distllm':
             return distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config)
-        elif program == 'corpus_search':
-            value = corpus_search_rag(query, rag_db, user_id, model, num_docs, session_id)
-            return value
         elif program == 'tfidf':
-            return tfidf_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config)
+            return tfidf_search_only(query, rag_db, user_id, model, num_docs, session_id, rag_config)
         else:
             raise ValueError(f"Unknown RAG program '{program}'. Available programs: distllm, corpus_search, chroma, default")
             
@@ -72,7 +68,7 @@ def multi_rag_handler(query, rag_db, user_id, model, num_docs, session_id, rag_c
         query: User query string
         rag_db: RAG database name
         user_id: User identifier
-        model: Model name to use
+        model: Model name to use for chat
         num_docs: Number of documents to retrieve
         session_id: Session identifier
         rag_config_list: List of RAG configurations
@@ -106,18 +102,18 @@ def multi_rag_handler(query, rag_db, user_id, model, num_docs, session_id, rag_c
             raise ValueError(f"TF-IDF configuration is not valid: {tfidf_config}")
         if distllm_config.get('program') != 'distllm':
             raise ValueError(f"distLLM configuration is not valid: {distllm_config}")
-        
+
         tfidf_results = tfidf_search_only(query, rag_db, user_id, model, num_docs, session_id, tfidf_config)
-        tfidf_string = '\n\n'.join(tfidf_results)
+        text_list = tfidf_results['documents']
+        tfidf_string = '\n\n'.join(text_list)
         distllm_results = distllm_rag(query, rag_db, user_id, model, num_docs, session_id, distllm_config, tfidf_string)
-        documents = distllm_results['documents'] + tfidf_results
+        documents = distllm_results['documents'] + text_list
 
         # Combine results from all RAG configurations
         combined_response = {
             'message': 'success',
-            'response': distllm_results['response'],
-            'system_prompt': distllm_results['system_prompt'],
-            'documents': documents
+            'documents': documents,
+            'embedding': distllm_results['embedding']
         }
         
         return combined_response
@@ -167,9 +163,8 @@ def distllm_rag(query, rag_db, user_id, model, num_docs, session_id, rag_config,
         
         return {
             'message': 'success',
-            'response': result.get('response', ''),
-            'system_prompt': result.get('system_prompt', ''),
-            'documents': result.get('documents', [])
+            'documents': result.get('documents', []),
+            'embedding': result.get('embedding', [])
         }
         
     except Exception as e:
@@ -238,9 +233,12 @@ def tfidf_search_only(query, rag_db, user_id, model, num_docs, session_id, rag_c
         # Call the tfidf_chat function
         results = tfidf_search(query, rag_db, embeddings_path, vectorizer_path)
         text_list = [res['text'] for res in results]
-        
-        return text_list
 
+        return {
+            'message': 'success',
+            'documents': text_list,
+            'embedding': None
+        }
         
     except Exception as e:
         print(f"Error in tfidf_rag: {e}")
@@ -248,63 +246,6 @@ def tfidf_search_only(query, rag_db, user_id, model, num_docs, session_id, rag_c
             'error': str(e),
             'message': 'Failed to process TF-IDF search',
             'program': 'tfidf',
-            'rag_db': rag_db
-        }
-
-def corpus_search_rag(query, rag_db, user_id, model, num_docs, session_id):
-    """
-    Handle RAG requests using corpus search implementation.
-    
-    Args:
-        query: User query string
-        rag_db: RAG database name
-        user_id: User identifier
-        model: Model name to use
-        num_docs: Number of documents to retrieve
-        session_id: Session identifier
-        
-    Returns:
-        Dict containing the search results
-    """
-    try:
-        print(f"Corpus Search RAG: Processing query for rag_db '{rag_db}'")
-        
-        # Default parameters for corpus search
-        strategies = None  # Use all available strategies
-        fusion = "rrf"     # Reciprocal rank fusion
-        required_tags = []
-        excluded_tags = []
-        
-        # Call the corpus search function
-        results = search_corpus(
-            corpus=rag_db,
-            query=query,
-            strategies=strategies,
-            top_k=int(num_docs),
-            fusion=fusion,
-            required_tags=required_tags,
-            excluded_tags=excluded_tags
-        )
-
-        conversation_text = '\n\n'.join(results)
-        conversation_text = (
-            f"Here are the top {num_docs} documents "
-            f"retrieved from the corpus. Use these documents to answer the user's question "
-            f"if possible, otherwise just answer the question based on your knowledge:\n\n"
-            f"{conversation_text}"
-        )
-
-        response = chat_only_request(query, model, conversation_text)
-        response['system_prompt'] = conversation_text
-        
-        return response
-        
-    except Exception as e:
-        print(f"Error in corpus_search_rag: {e}")
-        return {
-            'error': str(e),
-            'message': 'Failed to process corpus search RAG request',
-            'program': 'corpus_search',
             'rag_db': rag_db
         }
 

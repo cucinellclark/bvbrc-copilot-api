@@ -9,9 +9,7 @@ const { OpenAI } = require('openai');
 // const config = require('./config.json');
 
 const chatRoutes = require('./routes/chatRoutes'); // chat-related routes
-// const ragRoutes = require('./routes/ragRoutes');
 const dbRoutes = require('./routes/dbRoutes');
-
 //const port = process.env.PORT || 3000;
 // const port = process.env.PORT || 7032;
 const app = express();

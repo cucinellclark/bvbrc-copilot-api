@@ -12,7 +12,7 @@ file_path = os.path.dirname(os.path.realpath(__file__))
 
 # TODO: add error checking to each function
 
-@app.route('/encode', methods=["POST"])
+@app.route('/tfidf_encode', methods=["POST"])
 def call_encode_query():
     data = request.get_json()
     query_embedding_array = tv.encode_query(data) 
