@@ -23,6 +23,8 @@ def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
     """
     try:
         # Query MongoDB for RAG configuration
+        if rag_db == 'bvbrc_default':
+            return bvbrc_default_rag(query, rag_db, user_id, model, num_docs, session_id)
         rag_config_list = get_rag_configs(rag_db)
 
         if not rag_config_list or len(rag_config_list) == 0:
@@ -334,4 +336,81 @@ def chat_only_request(query: str, model: str, system_prompt: Optional[str] = Non
         return {
             "error": "Invalid JSON response",
             "message": "The server returned an invalid JSON response"
+        }
+
+def bvbrc_default_rag(query, rag_db, user_id, model, num_docs, session_id):
+    """
+    Handle the default BVBRC RAG request by combining results from bvbrc_helpdesk 
+    (using multi_rag_handler) and cepi_journals (using distllm_rag).
+    
+    Args:
+        query: User query string
+        rag_db: RAG database name (should be 'bvbrc_default')
+        user_id: User identifier
+        model: Model name to use
+        num_docs: Number of documents to retrieve
+        session_id: Session identifier
+        
+    Returns:
+        Dict containing the combined response with documents and embedding
+    """
+    try:
+        print(f"BVBRC Default RAG: Processing query for rag_db '{rag_db}'")
+        
+        # Get RAG configurations for both databases
+        bvbrc_helpdesk_configs = get_rag_configs('bvbrc_helpdesk')
+        cepi_journals_configs = get_rag_configs('cepi_journals')
+        
+        if not bvbrc_helpdesk_configs or len(bvbrc_helpdesk_configs) == 0:
+            raise ValueError("No RAG configurations found for 'bvbrc_helpdesk'")
+        
+        if not cepi_journals_configs or len(cepi_journals_configs) == 0:
+            raise ValueError("No RAG configurations found for 'cepi_journals'")
+        
+        # Run bvbrc_helpdesk with multi_rag_handler
+        print("Running bvbrc_helpdesk with multi_rag_handler...")
+        bvbrc_helpdesk_result = multi_rag_handler(
+            query, 'bvbrc_helpdesk', user_id, model, num_docs, session_id, bvbrc_helpdesk_configs
+        )
+        
+        # Check if bvbrc_helpdesk_result has an error
+        if 'error' in bvbrc_helpdesk_result:
+            print(f"Error in bvbrc_helpdesk: {bvbrc_helpdesk_result['error']}")
+            bvbrc_documents = []
+        else:
+            bvbrc_documents = bvbrc_helpdesk_result.get('documents', [])
+        
+        # Run cepi_journals with distllm_rag (using the first configuration)
+        print("Running cepi_journals with distllm_rag...")
+        cepi_config = cepi_journals_configs[0]
+        cepi_result = distllm_rag(
+            query, 'cepi_journals', user_id, model, num_docs, session_id, cepi_config
+        )
+        
+        # Check if cepi_result has an error
+        if 'error' in cepi_result:
+            print(f"Error in cepi_journals: {cepi_result['error']}")
+            cepi_documents = []
+            cepi_embedding = []
+        else:
+            cepi_documents = cepi_result.get('documents', [])
+            cepi_embedding = cepi_result.get('embedding', [])
+        
+        # Combine documents from both sources
+        combined_documents = bvbrc_documents + cepi_documents
+        
+        # Return the combined result using the embedding from cepi_journals
+        return {
+            'message': 'success',
+            'documents': combined_documents,
+            'embedding': cepi_embedding
+        }
+        
+    except Exception as e:
+        print(f"Error in bvbrc_default_rag: {e}")
+        return {
+            'error': str(e),
+            'message': 'Failed to process BVBRC default RAG request',
+            'rag_db': rag_db,
+            'program': 'bvbrc_default'
         }

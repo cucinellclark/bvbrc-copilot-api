@@ -32,7 +32,6 @@ async function postJson(url, data, apiKey = null) {
             headers,
             body: JSON.stringify(data)
         });
-
         if (!res.ok) {
             throw new LLMServiceError(`HTTP error: ${res.status} ${res.statusText}`);
         }
@@ -107,12 +106,13 @@ async function queryRequestChat(url, model, system_prompt, query) {
         if (!url || !model || !query) {
             throw new LLMServiceError('Missing required parameters for queryRequestChat');
         }
+        var payload = {
+            model, temperature: 1.0,
+            messages: [{ role: 'system', content: system_prompt }, { role: 'user', content: query }]
+        }        
         return model === 'gpt4o'
             ? await queryRequestChatArgo(url, model, system_prompt, query)
-            : await postJson(url, {
-                model, temperature: 1.0,
-                messages: [{ role: 'system', content: system_prompt }, { role: 'user', content: query }]
-            }).then(res => {
+            : await postJson(url, payload).then(res => {
                 if (!res?.choices?.[0]?.message?.content) {
                     throw new LLMServiceError('Invalid response format from chat API');
                 }

@@ -13,6 +13,9 @@ def create_query_from_messages(query, messages, system_prompt, max_tokens):
     Returns:
         String containing the formatted query
     """
+
+    max_tokens = 40000
+
     # Use the cl100k_base encoding (used by GPT-4-turbo and GPT-3.5-turbo)
     encoding = tiktoken.get_encoding("cl100k_base")
     
