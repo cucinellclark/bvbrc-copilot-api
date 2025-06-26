@@ -116,7 +116,8 @@ async function handleCopilotRequest(opts) {
       rag_db = null,
       num_docs,
       image = null,
-      level = 1
+      level = 1,
+      enhanced_prompt = null
     } = opts;
 
     // Fast-path: delegate to enhancedCopilotRequest for level 3.
@@ -676,6 +677,7 @@ async function enhancedCopilotRequest(opts = {}) {
       num_docs,
       image = null,
       level = 3, // kept for backwards-compat even though we no longer forward
+      enhanced_prompt = null,
       ...rest // capture any additional, future fields without breaking
     } = opts;
 
@@ -687,27 +689,35 @@ async function enhancedCopilotRequest(opts = {}) {
     const modelData = await getModelData(model);
 
     // System prompt instructing the model to return structured JSON
-    const instructionSystemPrompt =
-      'You are an assistant that only outputs JSON. Do not write any explanatory text or natural language.\n' +
-      'Your tasks are:\n' +
-      '1. Store the original user query in the "query" field.\n' +
-      '2. Rewrite the query as "enhancedQuery" by intelligently incorporating any *relevant* context provided, while preserving the original intent.\n' +
-      '   - If the original query is vague (e.g., "describe this page") and appears to reference a page, tool, feature, or system, rewrite it to make the help-related intent clear.\n' +
-      '   - If there is no relevant context or no need to enhance, copy the original query into "enhancedQuery".\n' +
-      '3. Set "rag_helpdesk" to true if the query relates to helpdesk-style topics such as:\n' +
-      '   - website functionality\n' +
-      '   - troubleshooting\n' +
-      '   - how-to questions\n' +
-      '   - user issues or technical support needs\n' +
-      '   - vague references to a page, tool, or feature that may require explanation or support\n\n' +
-      'Additional context for the page the user is on, as well as relevant data, is provided below. Use it only if it helps clarify or improve the query:\n' +
-      `${system_prompt}\n\n` +
-      'Return ONLY a JSON object in the following format:\n' +
-      '{\n' +
-      '  "query": "<original user query>",\n' +
-      '  "enhancedQuery": "<rewritten or same query>",\n' +
-      '  "rag_helpdesk": <true or false>\n' +
-      '}';
+    const defaultInstructionPrompt = 
+    'You are an assistant that only outputs JSON. Do not write any explanatory text or natural language.\n' +
+    'Your tasks are:\n' +
+    '1. Store the original user query in the "query" field.\n' +
+    '2. Rewrite the query as "enhancedQuery" by intelligently incorporating any *relevant* context provided, while preserving the original intent.\n' +
+    '   - If the original query is vague (e.g., "describe this page") and appears to reference a page, tool, feature, or system, rewrite it to make the help-related intent clear.\n' +
+    '   - If there is no relevant context or no need to enhance, copy the original query into "enhancedQuery".\n' +
+    '3. Set "rag_helpdesk" to true if the query relates to helpdesk-style topics such as:\n' +
+    '   - website functionality\n' +
+    '   - troubleshooting\n' +
+    '   - how-to questions\n' +
+    '   - user issues or technical support needs\n' +
+    '   - vague references to a page, tool, or feature that may require explanation or support\n' +
+    '   - **any question mentioning the BV-BRC (Bacterial and Viral Bioinformatics Resource Center) or its functionality**\n\n';
+
+    const contextAndFormatInstructions = 
+    '\n\nAdditional context for the page the user is on, as well as relevant data, is provided below. Use it only if it helps clarify or improve the query:\n' +
+    `${system_prompt}\n\n` +
+    'Return ONLY a JSON object in the following format:\n' +
+    '{\n' +
+    '  "query": "<original user query>",\n' +
+    '  "enhancedQuery": "<rewritten or same query>",\n' +
+    '  "rag_helpdesk": <true or false>\n' +
+    '}';
+
+    console.log('***** enhanced_prompt *****\n', enhanced_prompt);
+
+    const instructionSystemPrompt = (enhanced_prompt || defaultInstructionPrompt) + contextAndFormatInstructions;
+  
 
     // Call the LLM (image-aware if image is present)
     let instructionResponse;
@@ -834,8 +844,8 @@ async function enhancedCopilotRequest(opts = {}) {
 
     // Create message objects
     const userContentForHistory = query !== finalQuery
-      ? `Original User Query: ${query}\n\nEnhanced User Query: ${finalQuery}`
-      : finalQuery;
+      ? `Original User Query: ${query}\n\nEnhanced User Query: ${finalQuery}\n\nInstruction System Prompt: ${instructionSystemPrompt}`
+      : `${finalQuery}\n\nInstruction System Prompt: ${instructionSystemPrompt}`;
 
     const userMessage       = createMessage('user', userContentForHistory);
     const assistantMessage  = createMessage('assistant', response);

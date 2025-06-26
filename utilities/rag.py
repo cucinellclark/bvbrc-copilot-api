@@ -2,7 +2,7 @@ import json
 import requests
 from typing import Optional, Dict, Any
 from mongo_helper import get_rag_configs
-from distllm.distllm.chat import distllm_chat
+from distllm.chat import distllm_chat
 from tfidf_vectorizer.tfidf_vectorizer import tfidf_search
 
 def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
