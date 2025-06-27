@@ -90,7 +90,7 @@ async function getChatSession(sessionId) {
     }
     console.log(`[getChatSession] Looking up session: ${sessionId}`);
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     const session = await chatCollection.findOne({ session_id: sessionId });
     
     if (session) {
@@ -114,7 +114,7 @@ async function getChatSession(sessionId) {
 async function getSessionMessages(sessionId) {
   try {
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     return await chatCollection
       .find({ session_id: sessionId })
       .project({
@@ -135,7 +135,7 @@ async function getSessionMessages(sessionId) {
 async function getSessionTitle(sessionId) {
   try {
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     return await chatCollection.find({ session_id: sessionId }).project({ title: 1 }).toArray();
   } catch (error) {
     throw new LLMServiceError('Failed to get session title', error);
@@ -150,7 +150,7 @@ async function getSessionTitle(sessionId) {
 async function getUserSessions(userId) {
   try {
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     return await chatCollection.find({ user_id: userId }).sort({ created_at: -1 }).toArray();
   } catch (error) {
     throw new LLMServiceError('Failed to get user sessions', error);
@@ -167,7 +167,7 @@ async function getUserSessions(userId) {
 async function updateSessionTitle(sessionId, userId, title) {
   try {
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     return await chatCollection.updateOne(
       { session_id: sessionId, user_id: userId },
       { $set: { title } }
@@ -186,7 +186,7 @@ async function updateSessionTitle(sessionId, userId, title) {
 async function deleteSession(sessionId, userId) {
   try {
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     return await chatCollection.deleteOne({ session_id: sessionId, user_id: userId });
   } catch (error) {
     throw new LLMServiceError('Failed to delete session', error);
@@ -201,7 +201,7 @@ async function deleteSession(sessionId, userId) {
 async function getUserPrompts(userId) {
   try {
     const db = await connectToDatabase();
-    const promptsCollection = db.collection('testPrompts');
+    const promptsCollection = db.collection('prompts');
     return await promptsCollection.find({ user_id: userId }).sort({ created_at: -1 }).toArray();
   } catch (error) {
     throw new LLMServiceError('Failed to get user prompts', error);
@@ -218,7 +218,7 @@ async function getUserPrompts(userId) {
 async function saveUserPrompt(userId, name, text) {
   try {
     const db = await connectToDatabase();
-    const promptsCollection = db.collection('testPrompts');
+    const promptsCollection = db.collection('prompts');
     return await promptsCollection.updateOne(
       { user_id: userId },
       { $push: { saved_prompts: { title: name, text } } }
@@ -239,7 +239,7 @@ async function createChatSession(sessionId, userId, title = 'Untitled') {
   try {
     console.log(`[createChatSession] Creating new session: ${sessionId} for user: ${userId} with title: "${title}"`);
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     
     const result = await chatCollection.insertOne({
       session_id: sessionId,
@@ -266,7 +266,7 @@ async function createChatSession(sessionId, userId, title = 'Untitled') {
 async function addMessagesToSession(sessionId, messages) {
   try {
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     
     return await chatCollection.updateOne(
       { session_id: sessionId },
@@ -331,7 +331,7 @@ async function rateConversation(sessionId, userId, rating) {
   try {
     console.log(`[rateConversation] Rating session ${sessionId} with rating: ${rating}`);
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
     
     const result = await chatCollection.updateOne(
       { session_id: sessionId, user_id: userId },
@@ -364,7 +364,7 @@ async function rateMessage(userId, messageId, rating) {
   try {
     console.log(`[rateMessage] Rating message ${messageId} with rating: ${rating}`);
     const db = await connectToDatabase();
-    const chatCollection = db.collection('test1');
+    const chatCollection = db.collection('chat_sessions');
 
     const result = await chatCollection.updateOne(
       { user_id: userId, 'messages.message_id': messageId },
@@ -397,7 +397,7 @@ async function storeMessageEmbedding(sessionId, messageId, embedding) {
   try {
     console.log(`[storeMessageEmbedding] Storing embedding for message ${messageId} in session ${sessionId}`);
     const db = await connectToDatabase();
-    const embeddingsCollection = db.collection('test_embeddings');
+    const embeddingsCollection = db.collection('message_embeddings');
     
     const result = await embeddingsCollection.insertOne({
       session_id: sessionId,
@@ -423,7 +423,7 @@ async function getEmbeddingsBySessionId(sessionId) {
   try {
     console.log(`[getEmbeddingsBySessionId] Retrieving embeddings for session: ${sessionId}`);
     const db = await connectToDatabase();
-    const embeddingsCollection = db.collection('test_embeddings');
+    const embeddingsCollection = db.collection('message_embeddings');
     
     const embeddings = await embeddingsCollection
       .find({ session_id: sessionId })
@@ -447,7 +447,7 @@ async function getEmbeddingByMessageId(messageId) {
   try {
     console.log(`[getEmbeddingByMessageId] Retrieving embedding for message: ${messageId}`);
     const db = await connectToDatabase();
-    const embeddingsCollection = db.collection('test_embeddings');
+    const embeddingsCollection = db.collection('message_embeddings');
     
     const embedding = await embeddingsCollection.findOne({ message_id: messageId });
     
@@ -473,7 +473,7 @@ async function getChatCollections() {
     const db = await connectToDatabase();
     return {
       db,
-      chatCollection: db.collection('test1'),
+      chatCollection: db.collection('chat_sessions'),
       summaryCollection: db.collection('chatSummaries'),
       modelCollection: db.collection('modelList'),
       ragCollection: db.collection('ragList')

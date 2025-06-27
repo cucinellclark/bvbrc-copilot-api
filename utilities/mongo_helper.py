@@ -56,7 +56,7 @@ class MongoDBHelper:
             self.client = MongoClient(mongo_url)
             # Test the connection
             self.client.admin.command('ping')
-            self.db = self.client['dev_chat']  # Using same database as in database.js
+            self.db = self.client['copilot']  # Using same database as in database.js
             print("Connected to MongoDB successfully")
             
         except ConnectionFailure as e:
@@ -129,7 +129,6 @@ class MongoDBHelper:
         try:
             if self.db is None:
                 raise Exception("Database connection not established")
-
             rag_collection = self.db['ragList']
             results = list(rag_collection.find({'name': rag_db_name}))
 

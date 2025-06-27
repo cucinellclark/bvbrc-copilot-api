@@ -1,7 +1,7 @@
 // database.js
 
 const { MongoClient } = require('mongodb');
-const config = require('./config.json'); // Adjust path as needed
+const config = require('./utilities/mongodb_config.json'); // Load from utilities directory
 
 // MongoDB setup
 const mongoUri = config['mongoDBUrl'];
@@ -16,7 +16,7 @@ async function connectToDatabase() {
         await mongoClient.connect();
         console.log('Connected to MongoDB');
     }
-    return mongoClient.db('dev_chat'); // Specify database name
+    return mongoClient.db('copilot'); // Specify database name
 }
 
 /**

@@ -22,8 +22,7 @@ const {
   createChatSession,
   addMessagesToSession,
   getOrCreateChatSession,
-  saveSummary,
-  storeMessageEmbedding
+  saveSummary
 } = require('./dbUtils');
 const { ChromaClient } = require('chromadb');
 const fs = require('fs');
@@ -153,17 +152,9 @@ async function handleCopilotRequest(opts) {
       const { documents = ['No documents found'], embedding } =
         await queryRag(newQuery, rag_db, user_id, model, num_docs, session_id);
       ctx.ragDocs        = documents;
-      ctx.user_embedding = embedding;
+      // ctx.user_embedding = embedding;
       ctx.systemPrompt  += ' Answer using the provided documents if relevant.';
-    } else {
-      // Get user embedding if not using RAG
-      ctx.user_embedding = await queryRequestEmbedding(
-        embedUrl,
-        embedModel,
-        embedKey,
-        newQuery
-      );
-    }
+    } 
 
     // Build the prompt based on history and RAG settings
     let finalPrompt = newQuery;
@@ -202,12 +193,6 @@ async function handleCopilotRequest(opts) {
     }
     
     const assistantMessage = createMessage('assistant', response);
-    const assistantEmb     = await queryRequestEmbedding(
-      embedUrl,
-      embedModel,
-      embedKey,
-      response
-    );
 
     let systemMessage = null;
     if (ctx.systemPrompt.trim()) {
@@ -223,9 +208,6 @@ async function handleCopilotRequest(opts) {
 
     if (save_chat) {
       await addMessagesToSession(session_id, toInsert);
-      if (ctx.user_embedding)
-        await storeMessageEmbedding(session_id, userMessage.message_id, ctx.user_embedding);
-      await storeMessageEmbedding(session_id, assistantMessage.message_id, assistantEmb);
     }
 
     return {
@@ -310,13 +292,6 @@ async function handleChatRequest({ query, model, session_id, user_id, system_pro
 
     if (save_chat) {
       await addMessagesToSession(session_id, messagesToInsert);
-
-      if (user_embedding) {
-        await storeMessageEmbedding(session_id, userMessage.message_id, user_embedding);
-      }
-      if (assistant_embedding) {
-        await storeMessageEmbedding(session_id, assistantMessage.message_id, assistant_embedding);
-      }
     }
 
     return { 
@@ -388,13 +363,6 @@ async function handleRagRequest({ query, rag_db, user_id, model, num_docs, sessi
 
     if (save_chat) {
       await addMessagesToSession(session_id, messagesToInsert);
-
-      if (user_embedding) {
-        await storeMessageEmbedding(session_id, userMessage.message_id, user_embedding);
-      }
-      if (assistant_embedding) {
-        await storeMessageEmbedding(session_id, assistantMessage.message_id, assistant_embedding);
-      }
     }
 
     return { 
@@ -465,13 +433,6 @@ async function handleChatImageRequest({ query, model, session_id, user_id, image
 
     if (save_chat) {
       await addMessagesToSession(session_id, messagesToInsert);
-
-      if (user_embedding) {
-        await storeMessageEmbedding(session_id, userMessage.message_id, user_embedding);
-      }
-      if (assistant_embedding) {
-        await storeMessageEmbedding(session_id, assistantMessage.message_id, assistant_embedding);
-      }
     }
 
     return { 
@@ -863,18 +824,13 @@ async function enhancedCopilotRequest(opts = {}) {
       await createChatSession(session_id, user_id);
     }
 
-    // Store messages + embeddings
+    // Store messages
     if (save_chat) {
       const toInsert = systemMessage
         ? [userMessage, systemMessage, assistantMessage]
         : [userMessage, assistantMessage];
 
       await addMessagesToSession(session_id, toInsert);
-
-      if (user_embedding) {
-        await storeMessageEmbedding(session_id, userMessage.message_id, user_embedding);
-      }
-      await storeMessageEmbedding(session_id, assistantMessage.message_id, assistantEmb);
     }
 
     return {
