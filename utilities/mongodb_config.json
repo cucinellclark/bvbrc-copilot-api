@@ -1,5 +1,6 @@
 {
   "mongoDBUrl": "mongodb://140.221.78.15:27017/copilot",
+  "mongoDBUrl_production": "mongodb://copilot:pVPXyTVmRkya9o9T@spruce:27017/copilot?authSource=copilot",
   "database": "copilot",
   "collections": {
     "chatSessions": "chat_sessions",
