@@ -1,73 +1,138 @@
-# BV-BRC AI API 
+# BV-BRC Copilot API
 
-This project is a Node.js-based API that leverages OpenAI's language model api to facilitate chat interactions. It uses Express for handling HTTP requests and MongoDB for storing chat sessions and messages.
+A production–ready Node.js/Express service that exposes Large-Language-Model (LLM) functionality and Retrieval-Augmented-Generation (RAG) utilities to **BV-BRC** applications.
 
-## Features
+The service acts as a wrapper around multiple back-end model providers, MongoDB persistence, and optional Chroma/FAISS vector stores.  All requests are protected by BV-BRC single-sign-on tokens and can be horizontally scaled with **PM2**.
 
-- **Chat with OpenAI**: Send messages to OpenAI's language model and receive responses.
-- **Session Management**: Create and manage chat sessions, storing messages in MongoDB.
-- **Retrieve Chat History**: Fetch chat history for a specific session.
-- **Generate Session Titles**: Automatically generate descriptive titles for chat sessions.
+---
 
-## Prerequisites
+## ✨ Key Features
 
-- Node.js (v14 or later)
-- MongoDB instance
-- OpenAI API key
+• **Multi-provider chat** – route prompts to any model registered in the `modelList` MongoDB collection 
 
-## Installation
+• **Retrieval-Augmented Generation (RAG)** – Attach document context retrieved from vector databases that are listed in the `ragList` collection.
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/cucinellclark/bvbrc-copilot-api.git
-   cd bvbrc-copilot-api/
-   ```
+• **Image chat** – Send Base-64 screenshots or figures together with a textual prompt (`/chat-image`).
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+• **Session management** – Start, list, update, and delete chat sessions.  Messages are streamed to `chat_sessions` with embeddings for later search.
 
-3. **Configure environment**:
-   - Create a `config.json` file in the root directory with the following structure:
-     ```json
-     {
-       "openaiApiKey": "your-openai-api-key",
-       "openaiBaseUrl": "https://api.openai.com/v1",
-       "mongoDBUrl": "your-mongodb-connection-string",
-       "model": "gpt-3.5-turbo"
-     }
-     ```
+• **Rating endpoints** – Capture 👍 / 👎 feedback on conversations and individual messages.
 
-4. **Start the server**:
-   ```bash
-   npm start
-   ```
+• **Token counting, summarisation, and path-state helpers** – Utility calls that keep prompts short and relevant.
 
-   The server will run on `http://localhost:3000` by default.
+---
 
-## API Endpoints
+## 📦 Requirements
 
-### Chat Endpoints
+• Node.js ≥ 18  
+• MongoDB ≥ 5  
+• (optional) Chroma / FAISS instance for RAG  
+• An OpenAI (or compatible) account **or** internal model endpoints
 
-- **POST /api/copilot-chat**: Send a message to the chat model and receive a response.
-  - Request body: `{ "query": "your message", "session_id": "session-id", "user_id": "user-id" }`
-  - Response: `{ "message": "success", "response": { "role": "assistant", "content": "response message" } }`
+---
 
-- **GET /api/start-chat**: Generate a new unique session ID.
-  - Response: `{ "message": "created session id", "session_id": "new-session-id" }`
+## 🚀 Quick-start
 
-- **GET /api/get-chats**: Retrieve chat history by session ID. *(Implementation needed)*
+```bash
+# 1) clone & install
+$ git clone https://github.com/cucinellclark/bvbrc-copilot-api.git
+$ cd bvbrc-copilot-api && npm install
 
-- **GET /api/get-all-sessions**: Retrieve all session IDs for a user.
-  - Query parameter: `user_id`
-  - Response: `{ "sessions": [ { "session_id": "id", "title": "title", "created_at": "date" }, ... ] }`
+# 2) configuration – copy & edit as needed
+$ cp config.json config.local.json
+$ $EDITOR config.local.json  # edit secrets, URLs, port
 
-- **POST /api/put-chat-entry**: Insert a chat entry into the database. *(Implementation needed)*
+# 3) run
+$ node bin/launch-copilot         # listens on 7032 by default
+# OR
+$ pm2 start utilities_pm2.config.js   # recommended for production
+```
 
-- **POST /api/generate-title**: Generate a session title from the initial prompt.
-  - Request body: `{ "query": "initial prompt" }`
-  - Response: `{ "message": "success", "response": { "role": "assistant", "content": "generated title" } }`
+The server now responds on `http://localhost:7032/copilot-api/*`.
+
+---
+
+## ⚙️ Configuration (`config.json`)
+
+```json
+{
+  "mongoDBUrl": "mongodb://<user>:<pass>@host:27017/copilot?authSource=copilot",
+  "signingSubjectURL": "https://user.patricbrc.org/public_key",
+  "http_port": 7032,
+  "embedding_url": "http://vector-host:9998/v1/embeddings",
+  "embedding_model": "Salesforce/SFR-Embedding-Mistral",
+  "embedding_apiKey": "<key>"
+}
+```
+
+Additional per-provider credentials (API keys, endpoints, …) live in the `modelList` collection so they can be rotated without redeploying the service.
+
+---
+
+## 🔐 Authentication
+
+Every endpoint **requires** a BV-BRC JWT supplied via the `Authorization: Bearer <token>` header.  Tokens are verified against `signingSubjectURL` by the lightweight middleware in `middleware/auth.js`.
+
+---
+
+## 📑 REST API
+
+`/copilot-api/chatbrc/*` routes
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/copilot` | High-level Copilot entry that supports RAG + history. |
+| POST | `/chat` | Plain LLM chat (stores history). |
+| POST | `/chat-only` | One-off chat (no DB interaction). |
+| POST | `/rag` | Retrieval-augmented query using standard vector database. |
+| POST | `/rag-distllm` | RAG through **distllm** distributed embeddings. |
+| POST | `/chat-image` | Image + text prompt. |
+| GET  | `/start-chat` | Generate a UUID session id. |
+| GET  | `/get-session-messages` | Messages for a session. |
+| GET  | `/get-session-title` | Retrieve session title. |
+| GET  | `/get-all-sessions` | List sessions for a user. |
+| POST | `/generate-title-from-messages` | Auto-title a conversation. |
+| POST | `/update-session-title` | Rename a session. |
+| POST | `/delete-session` | Delete a session. |
+| GET  | `/get-user-prompts` | Saved prompt templates. |
+| POST | `/save-prompt` | Save/update a template. |
+| POST | `/rate-conversation` | 1-5 star rating. |
+| POST | `/rate-message` | −1 / 0 / 1 per-message rating. |
+| POST | `/get-path-state` | Helper to inspect remote path status. |
+
+`/copilot-api/db/*` routes
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/get-model-list` | Fetch active chat models and RAG databases. |
+
+**Test endpoint:** `GET /copilot-api/test` → `"Welcome to my API"`.
+
+---
+
+## 🛠 Development
+
+```bash
+# run with automatic restarts
+$ npx nodemon bin/launch-copilot
+
+# run tests (jest / mocha TBD)
+$ npm test
+```
+
+The codebase follows a classic MVC-ish layout:
+
+```
+|-- routes/        # Express routers (chat, db)
+|-- services/      # LLM integrations, Mongo helpers
+|-- middleware/    # Auth & other HTTP middlewares
+|-- utilities/     # Stand-alone scripts & python helpers (distllm, tfidf, …)
+|-- bin/launch-…   # Entrypoints for PM2 / docker
+```
+
+Pull requests are welcome!  Make sure `npm run lint` passes and add unit tests where appropriate.
+
+---
 
 ## License
 
