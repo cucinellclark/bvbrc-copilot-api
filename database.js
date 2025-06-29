@@ -33,7 +33,7 @@ async function removeBySession(sessionId, userId) {
 
     // Connect to the database
     const db = await connectToDatabase();
-    const sessionsCollection = db.collection('sessions');
+    const sessionsCollection = db.collection('chat_sessions');
 
     // Delete session document
     const deleteResult = await sessionsCollection.deleteOne({

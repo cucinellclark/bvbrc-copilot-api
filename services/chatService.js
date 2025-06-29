@@ -115,7 +115,7 @@ async function handleCopilotRequest(opts) {
       rag_db = null,
       num_docs,
       image = null,
-      level = 1,
+      level = 3,
       enhanced_prompt = null
     } = opts;
 
@@ -185,12 +185,7 @@ async function handleCopilotRequest(opts) {
     const response = await runModel(ctx, modelData);
 
     var userMessage = null;
-    if (level == 2) {
-      var bothQueries = 'Original User Query: ' + query + '\n\nEnhanced User Query: ' + newQuery;
-      userMessage      = createMessage('user', bothQueries);
-    } else {
-      userMessage      = createMessage('user', newQuery);
-    }
+    userMessage      = createMessage('user', newQuery);
     
     const assistantMessage = createMessage('assistant', response);
 
@@ -198,6 +193,7 @@ async function handleCopilotRequest(opts) {
     if (ctx.systemPrompt.trim()) {
       systemMessage = createMessage('system', ctx.systemPrompt);
       if (ctx.ragDocs) systemMessage.documents = ctx.ragDocs;
+      if (newQuery) systemMessage.copilotDetails = newQuery;
     }
 
     if (!chatSession && save_chat) await createChatSession(session_id, user_id);
@@ -726,6 +722,7 @@ async function enhancedCopilotRequest(opts = {}) {
       enhancedQuery: query,
       rag_helpdesk: false
     };
+    console.log('***** parsed *****\n', parsed);
 
     const finalQuery      = parsed.enhancedQuery || query;
     const useHelpdeskRag  = !!parsed.rag_helpdesk;
@@ -804,19 +801,19 @@ async function enhancedCopilotRequest(opts = {}) {
     // ------------------------------------------------------------------
 
     // Create message objects
-    const userContentForHistory = query !== finalQuery
-      ? `Original User Query: ${query}\n\nEnhanced User Query: ${finalQuery}\n\nInstruction System Prompt: ${instructionSystemPrompt}`
-      : `${finalQuery}\n\nInstruction System Prompt: ${instructionSystemPrompt}`;
+    const userContentForHistory = `Enhanced User Query: ${finalQuery}\n\nInstruction System Prompt: ${instructionSystemPrompt}`;
 
-    const userMessage       = createMessage('user', userContentForHistory);
+    const userMessage       = createMessage('user', query);
     const assistantMessage  = createMessage('assistant', response);
 
     const assistantEmb = await queryRequestEmbedding(embedUrl, embedModel, embedKey, response);
 
     let systemMessage = null;
+    console.log('***** system_prompt *****\n', system_prompt);
     if (system_prompt && system_prompt.trim() !== '') {
       systemMessage = createMessage('system', system_prompt);
       if (ragDocs) systemMessage.documents = ragDocs;
+      if (userContentForHistory) systemMessage.copilotDetails = userContentForHistory;
     }
 
     // Ensure chat session exists if we intend to save
@@ -832,6 +829,9 @@ async function enhancedCopilotRequest(opts = {}) {
 
       await addMessagesToSession(session_id, toInsert);
     }
+
+    console.log('returning response in enhanced copilot');
+    console.log('***** systemMessage *****\n', systemMessage);
 
     return {
       message: 'success',

@@ -9,107 +9,13 @@ const config = require('../config.json');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 
-/* I don't think I need these functions
-
-// OpenAI client setup
-function setupOpenaiClient(apikey, url) {
-    try {
-        const openai_client = new OpenAI({
-            apiKey: apikey,
-            baseURL: url
-        });
-        return openai_client;
-    } catch (error) {
-        console.error('Error during setupOpenaiClient: ', error);
-        return null;
-    }
-}
-
-// OpenAI client llm query
-async function queryClient(openai_client, model, llmMessages) {
-    try {
-        const llm_res = await openai_client.chat.completions.create({
-            model,
-            messages: llmMessages
-        });
-        //console.log(llm_res.choices[0].message.content);
-        const response = llm_res.choices[0].message.content;
-        return response;
-    } catch (error) {
-        console.error('Error during queryClient: ', error);
-        return null;
-    }
-}
-
-async function queryRequest(url, model, system_prompt, query) {
-    try {
-        console.log('model = ', model);
-
-        const data = {
-            model: model,
-            system: system_prompt,
-            prompt: [query],
-            user: "cucinell",
-            temperature: 1.0
-        };
-
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(data)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
-        }
-
-        const llmData = await response.json();
-
-        return llmData.response; // Assuming 'response' is a key in the returned JSON
-    } catch (error) {
-        console.error('Error during queryRequest:', error);
-        throw error; // Re-throw the error for the caller to handle
-    }
-}
-
-async function getModels(db) {
-    try {
-        const modelCollection = db.collection('modelList');
-        const all_models = await modelCollection.find({}).toArray();
-
-        const activeModels = [];
-        for (const model of all_models) {
-            var use_client = model['queryType'] == 'client';
-            var isActive = false;
-            if (use_client) { // openai client
-                const curr_client = setupOpenaiClient(model['apiKey'],model['endpoint']);
-                const llmMessages = [{'role':'user', content:'Are you awake?'}];
-                isActive = await queryClient(curr_client, model['model'], llmMessages);
-            } else { // general request
-                isActive = await queryRequest(model['endpoint'], model['model'], '', 'Are you awake?');
-            }
-            if (isActive) {
-                activeModels.push(model);
-            }
-        }
-
-        return activeModels;
-    } catch (error) {
-        console.error('Error getting active models:', error);
-        return [];
-    }
-}
-
-*/
-
 // TODO: add an extra params argument or something?
 // - want to enable a parameter that allows for extra filtering, passed by the front end
 //      without bulking up this function
 // TODO: also decide between using camel case or underscores in the mongodb.
 //  Using one of each is dumb
 router.post('/get-model-list', authenticate, async (req, res) => {
+    debugger;
     try {
         const project_id = req.body; 
         var pid = null;
