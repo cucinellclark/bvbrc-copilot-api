@@ -151,7 +151,8 @@ async function getUserSessions(userId) {
   try {
     const db = await connectToDatabase();
     const chatCollection = db.collection('chat_sessions');
-    return await chatCollection.find({ user_id: userId }).sort({ created_at: -1 }).toArray();
+    const sessions = await chatCollection.find({ user_id: userId }).sort({ created_at: -1 }).toArray();
+    return sessions;
   } catch (error) {
     throw new LLMServiceError('Failed to get user sessions', error);
   }

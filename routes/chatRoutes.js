@@ -22,8 +22,8 @@ const router = express.Router();
 // ========== MAIN CHAT ROUTES ==========
 router.post('/copilot', authenticate, async (req, res) => {
     try {
-        const { query, model, session_id, user_id, system_prompt, save_chat = true, include_history = true, rag_db = null, num_docs = null, image = null, level = 1, enhanced_prompt = null } = req.body;
-        const response = await ChatService.handleCopilotRequest({ query, model, session_id, user_id, system_prompt, save_chat, include_history, rag_db, num_docs, image, level, enhanced_prompt });
+        const { query, model, session_id, user_id, system_prompt, save_chat = true, include_history = true, rag_db = null, num_docs = null, image = null, enhanced_prompt = null } = req.body;
+        const response = await ChatService.handleCopilotRequest({ query, model, session_id, user_id, system_prompt, save_chat, include_history, rag_db, num_docs, image, enhanced_prompt });
         res.status(200).json(response);
     } catch (error) {
         console.error('Error:', error);
