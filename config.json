@@ -1,0 +1,8 @@
+{
+  "mongoDBUrl": "mongodb://copilot:pVPXyTVmRkya9o9T@spruce:27017/copilot?authSource=copilot",
+  "signingSubjectURL": "https://user.patricbrc.org/public_key",
+  "http_port": 7032,
+  "embedding_url": "http://lambda12.cels.anl.gov:9998/v1/embeddings",
+  "embedding_model": "Salesforce/SFR-Embedding-Mistral",
+  "embedding_apiKey": "BRCMistral"
+}
