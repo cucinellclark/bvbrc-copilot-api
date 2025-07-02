@@ -1,10 +1,15 @@
 #!/bin/bash
 
+DIR=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
+
 # Navigate to project directory
-cd /home/ac.cucinell/bvbrc-dev/Copilot/bvbrc-copilot-api/utilities
+cd $DIR
 
 # Activate the virtual environment
-source /home/ac.cucinell/bvbrc-dev/Copilot/startup_scripts/copilot_utils_env/bin/activate 
+# We assume it is installed in the same directory as the copilot checkout
+
+venv=$(realpath $DIR/../../venv)
+source $venv/bin/activate
 
 ## Start the Flask server
 #python3 server.py
