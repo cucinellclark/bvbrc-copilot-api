@@ -259,7 +259,7 @@ async function handleCopilotRequest(opts) {
     // Retrieve documents (if RAG)
     let ragDocs = null;
     if (activeRagDb) {
-      const { documents = ['No documents found'] } = await queryRag(
+      var { documents = ['No documents found'] } = await queryRag(
         finalQuery,
         activeRagDb,
         user_id,
@@ -268,6 +268,23 @@ async function handleCopilotRequest(opts) {
         session_id
       );
       ragDocs = documents;
+    }
+
+    if (rag_db && rag_db !== 'bvbrc_helpdesk') {
+      var { documents = ['No documents found'] } = await queryRag(
+        finalQuery,
+        rag_db,
+        user_id,
+        model,
+        num_docs,
+        session_id
+      );
+
+      if (ragDocs && ragDocs.length > 0) {
+        ragDocs = ragDocs.concat(documents);
+      } else {
+        ragDocs = documents;
+      }
     }
 
     // ------------------------------------------------------------------

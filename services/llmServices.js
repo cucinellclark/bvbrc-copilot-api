@@ -286,11 +286,11 @@ async function queryRag(query, rag_db, user_id, model, num_docs, session_id) {
             num_docs, 
             session_id 
         });
-        
+
         if (!res) {
             throw new LLMServiceError('Invalid response format from RAG API: No response received');
         }
-        console.log('res', res);
+
         return res;
     } catch (error) {
         if (error instanceof LLMServiceError) {

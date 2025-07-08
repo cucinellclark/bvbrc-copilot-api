@@ -1,9 +1,26 @@
 import json
 import requests
+import os
 from typing import Optional, Dict, Any
 from mongo_helper import get_rag_configs
 from distllm.chat import distllm_chat
 from tfidf_vectorizer.tfidf_vectorizer import tfidf_search
+
+def load_config():
+    """Load configuration from config.json file"""
+    config_path = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+    try:
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"Config file not found at {config_path}")
+        return {}
+    except json.JSONDecodeError:
+        print(f"Invalid JSON in config file at {config_path}")
+        return {}
+    except Exception as e:
+        print(f"Error loading config file: {e}")
+        return {}
 
 def rag_handler(query, rag_db, user_id, model, num_docs, session_id):
     """
@@ -80,18 +97,15 @@ def multi_rag_handler(query, rag_db, user_id, model, num_docs, session_id, rag_c
     """
     try:
         print(f"Multi-RAG Handler: Processing query for rag_db '{rag_db}'")
-        
         # Validate that we have exactly 2 RAG configurations
         if len(rag_config_list) != 2:
             raise ValueError(f"Multi-RAG handler requires exactly 2 configurations, but got {len(rag_config_list)}")
-        
         # Extract program fields from both configurations
         programs = [config.get('program', 'default') for config in rag_config_list]
         
         # Validate that we have one 'tfidf' and one 'distllm' configuration
         if not ('tfidf' in programs and 'distllm' in programs):
             raise ValueError(f"Multi-RAG handler requires one 'tfidf' and one 'distllm' configuration, but got programs: {programs}")
-        
         # Initialize a list to store results from each RAG configuration
         results = []
         
@@ -104,13 +118,11 @@ def multi_rag_handler(query, rag_db, user_id, model, num_docs, session_id, rag_c
             raise ValueError(f"TF-IDF configuration is not valid: {tfidf_config}")
         if distllm_config.get('program') != 'distllm':
             raise ValueError(f"distLLM configuration is not valid: {distllm_config}")
-
         tfidf_results = tfidf_search_only(query, rag_db, user_id, model, num_docs, session_id, tfidf_config)
         text_list = tfidf_results['documents']
         tfidf_string = '\n\n'.join(text_list)
         distllm_results = distllm_rag(query, rag_db, user_id, model, num_docs, session_id, distllm_config, tfidf_string)
         documents = distllm_results['documents'] + text_list
-
         # Combine results from all RAG configurations
         combined_response = {
             'message': 'success',
@@ -293,9 +305,13 @@ def chat_only_request(query: str, model: str, system_prompt: Optional[str] = Non
         "Content-Type": "application/json"
     }
     
-    # Add authentication header
-    # TODO: change to use config
-    headers["Authorization"] = f"Bearer un=clark.cucinell@patricbrc.org|tokenid=6426bfed-5570-4139-9c73-f60dd82f4190|expiry=1763908486|client_id=clark.cucinell@patricbrc.org|token_type=Bearer|scope=user|roles=admin|SigningSubject=https://user.patricbrc.org/public_key|sig=2f47f26e58688f245da08353978f6f3e19c37b40f8a76f36b7190eccef1f6a48a44e7cde3a079d17b6fc75d34257346e5573c503ac237eb878eb0a539b34bf4f12b84b480d6d7cbc3f4b8f8946cf07bfe367c48fe11844f19f7e4bdaa4f2c685e5af21d7a06032c5b1b3de9b126a4d9545bf3c86c4a4c4ccce9752489b1ce3f3"
+    # Add authentication header from config
+    config = load_config()
+    auth_token = config.get('authorization_token', '')
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
+    else:
+        print("Warning: No authorization token found in config file")
     
     try:
         # Make the POST request to the /chat-only endpoint

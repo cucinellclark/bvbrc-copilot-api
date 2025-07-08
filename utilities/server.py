@@ -5,10 +5,58 @@ from tokenizer import count_tokens
 from rag import rag_handler
 from text_utils import create_query_from_messages
 from state_utils import get_path_state
+import logging
+from datetime import datetime
 
 app = Flask(__name__)
 
 file_path = os.path.dirname(os.path.realpath(__file__))
+
+# ---------------------------------------------------------------------------
+# Access logging (Apache combined log format)
+# ---------------------------------------------------------------------------
+# This sets up a dedicated logger that writes one line per request in the same
+# "combined" format produced by Apache's access logs.
+# Example line:
+# 127.0.0.1 - - [10/Jul/2025:21:15:05 +0000] "GET /test HTTP/1.1" 200 17 "-" "curl/7.81.0"
+
+access_log_path = os.path.join(file_path, "access.log")
+access_logger = logging.getLogger("access")
+access_logger.setLevel(logging.INFO)
+
+# Avoid duplicating handlers if this file is reloaded (e.g., in debug mode)
+if not access_logger.handlers:
+    handler = logging.FileHandler(access_log_path)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    access_logger.addHandler(handler)
+
+# Log every request after it is processed
+@app.after_request
+def log_request(response):
+    """Write an Apache-style access log entry for every request."""
+    # Timestamp in Apache format
+    timestamp = datetime.utcnow().strftime("%d/%b/%Y:%H:%M:%S +0000")
+
+    # Build the request line: "METHOD PATH PROTOCOL"
+    request_line = f"{request.method} {request.full_path if request.full_path else request.path} {request.environ.get('SERVER_PROTOCOL')}"
+
+    # Bytes sent to the client. If unknown, use '-'.
+    bytes_sent = response.calculate_content_length() or "-"
+
+    log_parts = [
+        request.remote_addr or "-",
+        "-",                       # remote logname (unused)
+        "-",                       # remote user (unused)
+        f"[{timestamp}]",
+        f'"{request_line}"',
+        response.status_code,
+        bytes_sent,
+        f'"{request.headers.get("Referer", "-")}"',
+        f'"{request.headers.get("User-Agent", "-")}"',
+    ]
+
+    access_logger.info(" ".join(map(str, log_parts)))
+    return response
 
 # TODO: add error checking to each function
 

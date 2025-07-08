@@ -6,7 +6,6 @@ from datasets import load_from_disk
 from .faiss_helper import faiss_search_dataset
 
 file_path = os.path.dirname(os.path.realpath(__file__))
-print(f'file_path = {file_path}')
 
 # Function to load vectorizer dynamically from a .npy file
 def load_vectorizer_by_name(vectorizers, vectorizer_name):
