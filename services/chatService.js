@@ -127,6 +127,46 @@ async function handleCopilotRequest(opts) {
     // Retrieve model configuration (API key, endpoint, etc.)
     const modelData = await getModelData(model);
 
+    // Get conversation history first so it can be used in screenshot assessment
+    const chatSession = await getChatSession(session_id);
+    const history = chatSession?.messages || [];
+
+    /*
+    // Format conversation history for the prompt using createQueryFromMessages
+    const formattedHistory = history.length > 0 
+      ? await createQueryFromMessages('', history, '', 10000)
+      : 'No previous conversation history';
+
+    // Check if the query is a screenshot
+    const screenshotAssessmentPrompt =
+      'You are an assistant that outputs JSON only. Do not write any explanatory text or natural language.\n' +
+      'Given the following conversation history and the current user query, determine if the query requires visual context (screenshot of the viewport) to be properly answered.\n' +
+      'Conditions to set "query_screenshot" to true:\n' +
+      '  - Explicitly references current viewport, layout, design, or visible UI elements.\n' +
+      '  - Is vague and context-dependent (e.g., "What is this?", "Explain what I\'m seeing", "Describe this layout").\n' +
+      '  - Indicates visual components like UI errors, layout issues, or unexpected screen behavior.\n' +
+      'Otherwise, set "query_screenshot" to false.\n\n' +
+      'Conversation history:\n' +
+      `${formattedHistory}\n\n` +
+      'User query:\n' +
+      `${query}\n\n` +
+      'Return ONLY a JSON object in this exact format:\n' +
+      '{\n' +
+      '  "query_screenshot": <true or false>\n' +
+      '}';
+
+    const screenshotAssessmentResponse = await queryChatOnly({
+      query: query,
+      model,
+      system_prompt: screenshotAssessmentPrompt,
+      include_history: false,
+      modelData
+    });
+
+    console.log('***** screenshotAssessmentResponse *****\n', screenshotAssessmentResponse);
+
+    */
+
     // System prompt instructing the model to return structured JSON
     const defaultInstructionPrompt = 
     'You are an assistant that only outputs JSON. Do not write any explanatory text or natural language.\n' +
@@ -214,8 +254,7 @@ async function handleCopilotRequest(opts) {
     // (2) Build context: history, RAG retrieval, embeddings, etc.
     // ------------------------------------------------------------------
 
-    const chatSession  = await getChatSession(session_id);
-    const history      = chatSession?.messages || [];
+    // chatSession and history are already retrieved above for screenshot assessment
 
     // Retrieve documents (if RAG)
     let ragDocs = null;

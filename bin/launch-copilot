@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 //var debug = require('debug')('p3-web');
 var app = require('../index');
-// var conf = require('../config');
+var conf = require('../config.json');
 
-// app.set('port', conf.get('http_port') || 7032);
-app.set('port', 7032);
+app.set('port', conf.http_port || 7032);
 
 var server = app.listen(app.get('port'), function () {
   console.log('Express server listening on port ' + server.address().port);
