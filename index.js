@@ -6,8 +6,6 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const { OpenAI } = require('openai');
 
-// const config = require('./config.json');
-
 const chatRoutes = require('./routes/chatRoutes'); // chat-related routes
 const dbRoutes = require('./routes/dbRoutes');
 //const port = process.env.PORT || 3000;
