@@ -5,7 +5,6 @@ const { OpenAI } = require('openai');
 const fetch = require('node-fetch');
 const { connectToDatabase } = require('../database');
 const { getActiveModels, getActiveRagDatabases } = require('../services/dbUtils');
-const config = require('../config.json');
 const router = express.Router();
 const authenticate = require('../middleware/auth');
 
