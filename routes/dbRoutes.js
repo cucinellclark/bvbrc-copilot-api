@@ -14,7 +14,6 @@ const authenticate = require('../middleware/auth');
 // TODO: also decide between using camel case or underscores in the mongodb.
 //  Using one of each is dumb
 router.post('/get-model-list', authenticate, async (req, res) => {
-    debugger;
     try {
         const project_id = req.body; 
         var pid = null;
