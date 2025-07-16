@@ -1,9 +1,14 @@
-import pickle, os, sys
+import pickle, os, sys, re
 import numpy as np
+import pyarrow as pa
 from scipy.sparse import load_npz
 from sklearn.feature_extraction.text import TfidfVectorizer
-from datasets import load_from_disk
+import pyarrow.dataset as ds
 from .faiss_helper import faiss_search_dataset
+
+# Regex patterns to identify files
+VECTORIZER_FILE_PATTERN = re.compile(r"vectorizer_components\.arrow$")
+EMBEDDING_FILE_PATTERN = re.compile(r"tfidf_embeddings_batch_\d+\.arrow$")
 
 file_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -44,131 +49,107 @@ def encode_query(data):
 
     return query_embedding_array
 
-def encode_query_from_dataset(query, dataset):
+# ----- modified loader helpers ------------------------------------------------
+
+def _find_files(directory: str, pattern: re.Pattern):
+    """Return full paths of files in *directory* whose filename matches *pattern*."""
+    return [os.path.join(directory, f) for f in os.listdir(directory) if pattern.match(f)]
+
+def load_vectorizer_by_path(vectorizers, dataset_dir):
     """
-    Encode a query using TF-IDF vectorizer data stored in a Hugging Face dataset.
-    
-    Args:
-        query: Query string to encode
-        dataset: Hugging Face dataset containing TF-IDF vectorizer data
-        
-    Returns:
-        List representation of the query embedding
+    Load the vectorizer components stored in `vectorizer_components.arrow` files.
+    Returns a PyArrow Table containing at least the columns 'vocabulary' and 'idf_values'.
+    """
+    if dataset_dir not in vectorizers:
+        try:
+            vec_files = _find_files(dataset_dir, VECTORIZER_FILE_PATTERN)
+            if not vec_files:
+                print(f"No vectorizer_components.arrow file(s) found in {dataset_dir}")
+                return None
+            
+            tables = []
+            for fpath in sorted(vec_files):
+                print(f"Loading vectorizer components from: {fpath}")
+                with pa.memory_map(fpath, 'r') as source:
+                    reader = pa.ipc.open_file(source)
+                    tables.append(reader.read_all())
+            
+            if len(tables) == 1:
+                table = tables[0]
+            else:
+                table = pa.concat_tables(tables, promote=True)
+                
+            vectorizers[dataset_dir] = table
+            print(f"Vectorizer components loaded (rows: {table.num_rows})")
+        except Exception as e:
+            print(f"Error loading vectorizer components from {dataset_dir}: {e}")
+            return None
+    return vectorizers[dataset_dir]
+
+def load_dataset_by_path(dataset_dir):
+    """
+    Load all embedding batches (tfidf_embeddings_batch_*.arrow) under *dataset_dir*.
+    Returns a concatenated PyArrow Table with at least an 'embedding' column.
     """
     try:
-        # Extract vectorizer components from the dataset
-        # Access vocabulary and idf_values as column arrays
-        vocabulary_list = dataset['vocabulary']
-        idf_values = dataset['idf_values']
-        
-        # Create vocabulary mapping from list (word -> index)
+        embed_files = _find_files(dataset_dir, EMBEDDING_FILE_PATTERN)
+        if not embed_files:
+            print(f"No embedding batch files found in {dataset_dir}")
+            return None
+        tables = []
+        for fpath in sorted(embed_files):
+            print(f"Reading embeddings batch: {os.path.basename(fpath)}")
+            with pa.memory_map(fpath, 'r') as source:
+                reader = pa.ipc.open_file(source)
+                tables.append(reader.read_all())
+        combined_table = pa.concat_tables(tables, promote=True)
+        print(f"Combined embeddings rows: {combined_table.num_rows}")
+        return combined_table
+    except Exception as e:
+        print(f"Error loading embedding batches from {dataset_dir}: {e}")
+        return None
+
+# ----- encode/query functions adjustments ------------------------------------
+
+def encode_query_from_dataset(query, dataset_table):
+    """
+    Encode a query using TF-IDF vectorizer data stored in a PyArrow Table.
+    """
+    try:
+        # Ensure we have a Table
+        if hasattr(dataset_table, "to_table"):
+            table = dataset_table.to_table()
+        else:
+            table = dataset_table
+
+        vocabulary_list = table.column('vocabulary').to_pylist()
+        idf_values = table.column('idf_values').to_pylist()
         vocabulary = {word: idx for idx, word in enumerate(vocabulary_list)}
-        
-        # Get vocab size and embedding dimension
-        vocab_size = len(vocabulary_list)
-        embedding_dim = len(idf_values)
-        
-        print(f"Vocabulary size: {vocab_size}")
-        print(f"Embedding dimension: {embedding_dim}")
-        
-        # Create a new TfidfVectorizer and set its vocabulary and idf values
         vectorizer = TfidfVectorizer()
-        
-        # Set vocabulary
         vectorizer.vocabulary_ = vocabulary
-        
-        # Set IDF values
         vectorizer.idf_ = np.array(idf_values)
-        
-        # Transform the query
         query_embedding = vectorizer.transform([query])
-        
-        # Convert sparse matrix to dense array and return as list
-        query_embedding_array = query_embedding.toarray().tolist()
-        
-        return query_embedding_array
-        
+        return query_embedding.toarray().tolist()
     except Exception as e:
         print(f"Error encoding query from dataset: {e}")
         return None
 
-def load_vectorizer_by_path(vectorizers, dataset_path):
-    """
-    Load a Hugging Face dataset instead of a vectorizer.
-    
-    Args:
-        vectorizers: Dictionary to cache loaded datasets
-        dataset_path: Path or name of the Hugging Face dataset
-        
-    Returns:
-        The loaded dataset
-    """
-    if dataset_path not in vectorizers:
-        try:
-            # Load Hugging Face dataset
-            dataset = load_from_disk(dataset_path)
-            vectorizers[dataset_path] = dataset
-            print(f"Successfully loaded Hugging Face dataset: {dataset_path}")
-        except Exception as e:
-            print(f"Error loading Hugging Face dataset {dataset_path}: {e}")
-            return None
-    return vectorizers[dataset_path]
-
-def load_dataset_by_path(dataset_path):
-    """
-    Load a Hugging Face dataset.
-    
-    Args:
-        dataset_path: Path or name of the Hugging Face dataset
-    
-    Returns:
-        The loaded dataset
-    """
-    dataset = load_from_disk(dataset_path)
-    return dataset
-
-def tfidf_search(query, rag_db, embeddings_path, dataset_path):
-    """
-    Process a user query using a Hugging Face dataset and return a response.
-    
-    Args:
-        query: User query string
-        rag_db: RAG database name
-        embeddings_path: Path to embeddings
-        dataset_path: Path or name of the Hugging Face dataset
-        
-    Returns:
-        Dict containing the response
-    """
+def tfidf_search(query, rag_db, embeddings_path, vectorizer_path):
+    """Search with TF-IDF using files in *dataset_dir* (both vectorizer & embeddings)."""
     try:
-        print(f"TF-IDF Chat: Processing query for rag_db '{rag_db}'")
-        
-        # Dictionary to store preloaded datasets
-        vectorizers = {}
-        
-        # Load the Hugging Face dataset
-        vectorizer_dataset = load_vectorizer_by_path(vectorizers, dataset_path)
-        if vectorizer_dataset is None:
-            return {
-                'message': 'ERROR_DATASET_NOT_FOUND',
-                'system_prompt': 'The Vectorizer Hugging Face dataset was not found. Please check the dataset name and try again.'
-            }
-        text_dataset = load_dataset_by_path(embeddings_path)
-        if text_dataset is None:
-            return {
-                'message': 'ERROR_DATASET_NOT_FOUND',
-                'system_prompt': 'The Text Hugging Face dataset was not found. Please check the dataset name and try again.'
-            }
-
-        query_embedding = encode_query_from_dataset(query, vectorizer_dataset)
-
-        documents = faiss_search_dataset(query_embedding, text_dataset)
-
+        print(f"TF-IDF search for rag_db='{rag_db}' using data dir '{embeddings_path}'")
+        vectorizers_cache = {}
+        vectorizer_table = load_vectorizer_by_path(vectorizers_cache, vectorizer_path)
+        if vectorizer_table is None:
+            return {'message': 'ERROR_VECTORIZER_NOT_FOUND',
+                    'system_prompt': 'Vectorizer components not found.'}
+        embeddings_table = load_dataset_by_path(embeddings_path)
+        if embeddings_table is None:
+            return {'message': 'ERROR_EMBEDDINGS_NOT_FOUND',
+                    'system_prompt': 'Embedding batches not found.'}
+        query_embedding = encode_query_from_dataset(query, vectorizer_table)
+        documents = faiss_search_dataset(query_embedding, embeddings_table)
         return documents
-
     except Exception as e:
-        print(f"Error in tfidf_chat: {e}")
-        return {
-            'message': 'ERROR',
-            'system_prompt': f'An error occurred while processing the query: {str(e)}'
-        }
+        print(f"Error in tfidf_search: {e}")
+        return {'message': 'ERROR', 'system_prompt': str(e)}
