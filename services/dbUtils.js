@@ -147,12 +147,29 @@ async function getSessionTitle(sessionId) {
  * @param {string} userId - The user ID to look up
  * @returns {Array} Array of chat sessions for the user
  */
-async function getUserSessions(userId) {
+async function getUserSessions(userId, limit = 20, offset = 0) {
   try {
+    // Ensure numeric values and enforce bounds
+    limit = Number.isFinite(limit) ? Math.min(Math.max(limit, 1), 100) : 20;
+    offset = Number.isFinite(offset) && offset >= 0 ? offset : 0;
+
     const db = await connectToDatabase();
     const chatCollection = db.collection('chat_sessions');
-    const sessions = await chatCollection.find({ user_id: userId }).sort({ created_at: -1 }).toArray();
-    return sessions;
+    const query = { user_id: userId };
+
+    // Total number of sessions for the user (without pagination)
+    const total = await chatCollection.countDocuments(query);
+
+    // Fetch paginated sessions ordered by newest first
+    const sessions = await chatCollection
+      .find(query)
+      // Sort by last_modified if it exists; otherwise fall back to created_at
+      .sort({ last_modified: -1, created_at: -1 })
+      .skip(offset)
+      .limit(limit)
+      .toArray();
+
+    return { sessions, total };
   } catch (error) {
     throw new LLMServiceError('Failed to get user sessions', error);
   }
@@ -247,7 +264,8 @@ async function createChatSession(sessionId, userId, title = 'Untitled') {
       user_id: userId,
       title,
       created_at: new Date(),
-      messages: []
+      messages: [],
+      last_modified: new Date()
     });
     
     console.log(`[createChatSession] Session created successfully: ${sessionId}`);
@@ -271,7 +289,10 @@ async function addMessagesToSession(sessionId, messages) {
     
     return await chatCollection.updateOne(
       { session_id: sessionId },
-      { $push: { messages: { $each: messages } } }
+      {
+        $push: { messages: { $each: messages } },
+        $set: { last_modified: new Date() }
+      }
     );
   } catch (error) {
     throw new LLMServiceError('Failed to add messages to session', error);

@@ -145,8 +145,16 @@ router.get('/get-all-sessions', authenticate, async (req, res) => {
             return res.status(400).json({ message: 'user_id is required' });
         }
 
-        const sessions = await getUserSessions(user_id);
-        res.status(200).json({ sessions });
+        // Parse pagination parameters
+        const limitParam = parseInt(req.query.limit, 10);
+        const offsetParam = parseInt(req.query.offset, 10);
+        let limit = (!isNaN(limitParam) && limitParam > 0) ? Math.min(limitParam, 100) : 20;
+        let offset = (!isNaN(offsetParam) && offsetParam >= 0) ? offsetParam : 0;
+
+        const { sessions, total } = await getUserSessions(user_id, limit, offset);
+        const has_more = offset + sessions.length < total;
+
+        res.status(200).json({ sessions, total, has_more });
     } catch (error) {
         console.error('Error retrieving chat sessions:', error);
         res.status(500).json({ message: 'Failed to retrieve chat sessions', error: error.message });
