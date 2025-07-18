@@ -3,19 +3,11 @@ import numpy as np
 import pickle
 import os
 from typing import List, Dict, Any, Optional
-from datasets import Dataset
 
-def faiss_search_dataset(query_embedding: List[List[float]], dataset: Dataset, top_k: int = 5) -> List[Dict[str, Any]]:
+def faiss_search_dataset(query_embedding: List[List[float]], dataset, top_k: int = 5) -> List[Dict[str, Any]]:
     """
     Perform FAISS similarity search using query embeddings.
-    
-    Args:
-        query_embedding: Query embedding as a list of lists (typically [[embedding_vector]])
-        dataset: Hugging Face dataset containing embeddings and document metadata
-        top_k: Number of top similar documents to return
-        
-    Returns:
-        List of dictionaries containing document information and similarity scores
+    dataset can be a PyArrow Table or something having `.to_table()`.
     """
     try:
         # Convert query embedding to numpy array
@@ -23,8 +15,14 @@ def faiss_search_dataset(query_embedding: List[List[float]], dataset: Dataset, t
         if query_vector.ndim == 2:
             query_vector = query_vector.reshape(1, -1)  # Ensure shape is (1, embedding_dim)
         
+        # Ensure we have a Table
+        if hasattr(dataset, "to_table"):
+            table = dataset.to_table()
+        else:
+            table = dataset
+        
         # Extract embeddings from the dataset
-        embeddings = np.array(dataset['embedding'], dtype=np.float32)
+        embeddings = np.array(table.column('embedding').to_pylist(), dtype=np.float32)
         print(f"Extracted {embeddings.shape[0]} embeddings with dimension {embeddings.shape[1]}")
         
         # Create FAISS index
@@ -59,18 +57,18 @@ def faiss_search_dataset(query_embedding: List[List[float]], dataset: Dataset, t
             }
             
             # Add document metadata from the dataset
-            if idx < len(dataset):
-                # Get the document at this index
-                doc = dataset[int(idx)]
-                result.update({
-                    'id': doc.get('id'),
-                    'doc_id': doc.get('doc_id'),
-                    'chunk_index': doc.get('chunk_index'),
-                    'text': doc.get('text'),
-                    'source': doc.get('source'),
-                    'embedding_model': doc.get('embedding_model'),
-                    'embedding_dim': doc.get('embedding_dim')
-                })
+            if idx < len(table):
+                # Get the document at this index from the PyArrow table
+                doc = {
+                    'id': table.column('id')[idx].as_py() if 'id' in table.column_names else None,
+                    'doc_id': table.column('doc_id')[idx].as_py() if 'doc_id' in table.column_names else None,
+                    'chunk_index': table.column('chunk_index')[idx].as_py() if 'chunk_index' in table.column_names else None,
+                    'text': table.column('text')[idx].as_py() if 'text' in table.column_names else None,
+                    'source': table.column('source')[idx].as_py() if 'source' in table.column_names else None,
+                    'embedding_model': table.column('embedding_model')[idx].as_py() if 'embedding_model' in table.column_names else None,
+                    'embedding_dim': table.column('embedding_dim')[idx].as_py() if 'embedding_dim' in table.column_names else None
+                }
+                result.update(doc)
             else:
                 result['text'] = f"Document {idx}"  # Fallback if no metadata
                 

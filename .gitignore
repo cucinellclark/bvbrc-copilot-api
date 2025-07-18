@@ -5,6 +5,6 @@ mongodb_config.json
 
 *copilot_utils_env*
 
-nodemodules/
+node_modules/
 
 access.log
